@@ -7,9 +7,12 @@ This repository contains a Retrieval-Augmented Generation (RAG) comparison appli
 - **Knowledge Base Management**: Create and manage a FAISS vector store of documents
 - **Classic RAG Implementation**: Traditional retrieval followed by generation
 - **Agentic RAG Implementation**: Advanced RAG with planning, self-critique, and specialized tools
+  - **Original Implementation**: Custom-built agentic RAG with iterative retrieval
+  - **LangGraph Implementation**: Graph-based agentic RAG using LangGraph
 - **Side-by-Side Comparison**: View and compare results from both approaches
 - **Interactive UI**: Streamlit-based interface with real-time processing logs
 - **Semantic Evaluation**: Compare answers using semantic similarity metrics
+- **Graph Visualization**: Visualize the LangGraph structure of the agentic RAG system
 
 ## RAG Approaches Compared
 
@@ -24,22 +27,33 @@ This repository contains a Retrieval-Augmented Generation (RAG) comparison appli
 - Dynamic context building based on intermediate results
 - Self-critique and validation of generated answers
 
+#### LangGraph Implementation
+- Graph-based execution flow using LangGraph
+- State management with TypedDict for better type safety
+- Clearly defined nodes and edges for easier visualization and debugging
+- Explicit decision-making conditions for graph traversal
+- More modular and maintainable code structure
+
 ## Project Structure
 
 - `app.py` - Streamlit web application
 - `knowledge_base.py` - Knowledge base creation and management
 - `rag_classic.py` - Classic RAG implementation
-- `rag_agentic.py` - Agentic RAG implementation with advanced features
+- `rag_agentic.py` - Original agentic RAG implementation
+- `rag_langgraph.py` - LangGraph-based agentic RAG implementation
 - `evaluation.py` - Evaluation utilities and similarity metrics
 - `test_rag.py` - Testing script
 - `setup_and_test.sh` - Setup and test script
 - `restart_streamlit.sh` - Streamlit restart script
 - `increase_inotify_watches.sh` - Script to increase inotify watch limits
 
-## Recent UI Improvements
+## Recent Improvements
 
 The application has been updated with significant improvements:
 
+- **LangGraph Integration**: Added a graph-based agentic RAG implementation using LangGraph
+- **Implementation Toggle**: Switch between original and LangGraph implementations
+- **Graph Visualization**: View the structure of the LangGraph implementation
 - **Enhanced UI Stability**: Eliminated screen flickering and UI glitches during processing
 - **Real-time Processing Logs**: Shows logs during RAG processing
 - **Stable Button Behavior**: Improved button state management during processing

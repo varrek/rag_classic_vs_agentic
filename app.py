@@ -1,6 +1,30 @@
 import os
-import streamlit as st
+import sys
 import logging
+
+# Fix for PyTorch module scanning issue in Streamlit
+# This modifies sys.modules to prevent Streamlit from scanning torch.classes
+try:
+    import torch
+    
+    # Create a custom module to prevent _path access
+    class CustomModule:
+        def __init__(self):
+            self.__path__ = None
+            
+    # Patch torch.classes to prevent Streamlit scanning errors
+    if 'torch.classes' in sys.modules:
+        sys.modules['torch.classes.__path__'] = CustomModule()
+    
+    # Configure PyTorch to reduce memory usage
+    torch.set_grad_enabled(False)
+    if hasattr(torch, 'set_num_threads'):
+        torch.set_num_threads(1)
+except ImportError:
+    pass
+
+# Continue with normal imports
+import streamlit as st
 import time
 import random
 import hashlib
@@ -13,7 +37,8 @@ from knowledge_base import (
     get_random_example_questions
 )
 from rag_classic import query_rag
-from rag_agentic import run_agentic_rag
+from rag_agentic import run_agentic_rag as run_agentic_rag_original
+from rag_langgraph import run_agentic_rag as run_agentic_rag_langgraph
 from evaluation import compare_answers
 
 # Configure logging
@@ -47,6 +72,7 @@ def init_session_state():
         'agentic_logs': "🔍 Waiting to start Agentic RAG processing...\n",
         'processing_complete': False,
         'app_version': "1.0.2",
+        'use_langgraph': True,  # Default to using the new LangGraph implementation
     }
     
     # Initialize each variable if not already present
@@ -167,10 +193,17 @@ def process_query(query: str):
     # Update status for Agentic RAG
     status_placeholder.info("Processing with Agentic RAG...")
     
+    # Select the appropriate implementation based on the session state
+    agentic_rag_implementation = run_agentic_rag_langgraph if st.session_state.get('use_langgraph', True) else run_agentic_rag_original
+    
+    # Update logs with the implementation being used
+    implementation_name = "LangGraph" if st.session_state.get('use_langgraph', True) else "Original"
+    update_agentic_logs(f"Using Agentic RAG implementation: {implementation_name}\n\n")
+    
     # Then process Agentic RAG
     try:
-        # Process with Agentic RAG - this will stream results via callback
-        run_agentic_rag(query, update_agentic_logs)
+        # Process with the selected Agentic RAG implementation - this will stream results via callback
+        agentic_rag_implementation(query, update_agentic_logs)
         logger.info("Agentic RAG processing completed")
     except Exception as e:
         logger.error(f"Error in Agentic RAG: {e}", exc_info=True)
@@ -209,6 +242,29 @@ def main():
     
     # Title and description
     st.title("🤖 RAG Comparison: Classic vs Agentic")
+    
+    # Configure sidebar
+    with st.sidebar:
+        st.title("Settings")
+        
+        # Implementation toggle
+        st.write("### Agentic RAG Implementation")
+        use_langgraph = st.toggle(
+            "Use LangGraph Implementation", 
+            value=st.session_state.get('use_langgraph', True),
+            help="Toggle between the original implementation and the new LangGraph-based implementation"
+        )
+        
+        # Update session state if the toggle changed
+        if use_langgraph != st.session_state.get('use_langgraph', True):
+            st.session_state.use_langgraph = use_langgraph
+            st.rerun()  # Rerun to ensure consistent state
+            
+        # Show current implementation info
+        if use_langgraph:
+            st.success("Using LangGraph-based agentic RAG")
+        else:
+            st.info("Using original agentic RAG implementation")
     
     st.markdown("""
     This application demonstrates the differences between Classic RAG and Agentic RAG approaches.
@@ -335,6 +391,71 @@ def main():
         
         with tabs[1]:  # Agentic RAG
             st.subheader("Agentic RAG Results")
+            
+            # Show which implementation was used
+            impl_name = "LangGraph" if st.session_state.get('use_langgraph', True) else "Original"
+            st.info(f"Implementation: {impl_name}")
+            
+            # Option to visualize the graph if using LangGraph
+            if st.session_state.get('use_langgraph', True) and st.button("Visualize LangGraph Structure"):
+                try:
+                    # Import necessary modules
+                    import networkx as nx
+                    import matplotlib.pyplot as plt
+                    from rag_langgraph import build_rag_graph
+                    
+                    # Create the graph
+                    graph = build_rag_graph()
+                    
+                    # Display the graph structure
+                    st.write("### LangGraph Structure")
+                    st.write("This shows the nodes and edges in the agentic RAG graph:")
+                    
+                    # Create a simple text representation of the graph
+                    graph_description = """
+                    Graph Structure:
+                    - START → agent
+                    - agent → retrieve (when using tools)
+                    - agent → generate (when not using tools)
+                    - retrieve → analyze
+                    - analyze → agent (when context insufficient)
+                    - analyze → generate (when context sufficient)
+                    - generate → END
+                    """
+                    st.code(graph_description, language="text")
+                    
+                    # Plot the graph structure using NetworkX and Matplotlib
+                    fig, ax = plt.subplots(figsize=(10, 8))
+                    G = nx.DiGraph()
+                    
+                    # Add nodes
+                    nodes = ["START", "agent", "retrieve", "analyze", "generate", "END"]
+                    G.add_nodes_from(nodes)
+                    
+                    # Add edges
+                    edges = [
+                        ("START", "agent"),
+                        ("agent", "retrieve"), 
+                        ("agent", "generate"),
+                        ("retrieve", "analyze"),
+                        ("analyze", "agent"),
+                        ("analyze", "generate"),
+                        ("generate", "END")
+                    ]
+                    G.add_edges_from(edges)
+                    
+                    # Draw the graph
+                    pos = nx.spring_layout(G, seed=42)
+                    nx.draw_networkx(G, pos, with_labels=True, node_color="lightblue", 
+                                     node_size=2000, font_size=10, arrows=True,
+                                     arrowsize=20, ax=ax)
+                    
+                    # Display the graph
+                    st.pyplot(fig)
+                    
+                except Exception as e:
+                    st.error(f"Error visualizing graph: {str(e)}")
+            
             st.markdown("##### Answer")
             st.markdown(st.session_state.agentic_answer or "No answer generated")
             
@@ -384,19 +505,6 @@ def main():
 
 # Initialize PyTorch settings and run the app
 if __name__ == "__main__":
-    # Disable file watching to prevent inotify watch limit errors
-    os.environ['STREAMLIT_SERVER_WATCH_CHANGES'] = 'false'
-    os.environ['STREAMLIT_SERVER_HEADLESS'] = 'true'
-    
-    # Configure PyTorch to reduce memory usage and prevent issues
-    try:
-        import torch
-        torch.set_grad_enabled(False)
-        if hasattr(torch, 'set_num_threads'):
-            torch.set_num_threads(1)
-    except ImportError:
-        pass
-    
     # Run the main app
     try:
         main()
