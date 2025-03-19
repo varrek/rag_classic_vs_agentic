@@ -4,6 +4,11 @@ import random
 from pathlib import Path
 import time
 from typing import List, Dict, Any, Optional, Tuple
+import warnings
+from langchain_core._api.deprecation import LangChainDeprecationWarning
+
+# Filter out LangChain deprecation warnings
+warnings.filterwarnings("ignore", category=LangChainDeprecationWarning)
 
 # Set page config
 st.set_page_config(
@@ -32,7 +37,7 @@ from knowledge_base import (
 )
 from rag_classic import run_classic_rag
 from rag_agentic import run_agentic_rag
-from evaluation import compare_answers
+from evaluation import compare_answers, get_content_from_llm_response
 
 # Initialize session state
 if 'knowledge_base_created' not in st.session_state:
@@ -87,10 +92,22 @@ def process_query(query: str, ground_truth: str = ""):
     # Compare answers if ground truth is available
     if ground_truth:
         try:
-            st.session_state.classic_score = compare_answers(classic_answer, ground_truth)
-            st.session_state.agentic_score = compare_answers(agentic_answer, ground_truth)
+            # Ensure we have strings, not AIMessage objects
+            classic_processed = get_content_from_llm_response(classic_answer)
+            agentic_processed = get_content_from_llm_response(agentic_answer)
+            ground_truth_processed = get_content_from_llm_response(ground_truth)
+            
+            st.info("Evaluating Classic RAG answer...")
+            st.session_state.classic_score = compare_answers(classic_processed, ground_truth_processed)
+            st.info(f"Classic RAG evaluation complete: {st.session_state.classic_score:.2f}")
+            
+            st.info("Evaluating Agentic RAG answer...")
+            st.session_state.agentic_score = compare_answers(agentic_processed, ground_truth_processed)
+            st.info(f"Agentic RAG evaluation complete: {st.session_state.agentic_score:.2f}")
         except Exception as e:
             st.error(f"Error comparing answers: {str(e)}")
+            import traceback
+            st.error(traceback.format_exc())
     
     # Show results
     st.session_state.show_results = True
@@ -98,6 +115,30 @@ def process_query(query: str, ground_truth: str = ""):
 def main():
     """Main function to run the Streamlit app."""
     st.title("📚 RAG Comparison: Classic vs Agentic")
+    
+    # Debug section for RAGAS testing
+    with st.expander("RAGAS Debugging Tools"):
+        st.subheader("Test RAGAS Evaluation")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            test_answer = st.text_area("Test Answer:", height=150)
+        
+        with col2:
+            test_ground_truth = st.text_area("Test Ground Truth:", height=150)
+        
+        if st.button("Test Evaluation", key="test_eval"):
+            if test_answer and test_ground_truth:
+                try:
+                    from evaluation import compare_answers
+                    score = compare_answers(test_answer, test_ground_truth)
+                    st.success(f"Evaluation successful! Similarity score: {score:.2f}")
+                except Exception as e:
+                    st.error(f"RAGAS evaluation failed: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc(), language="python")
+            else:
+                st.warning("Please enter both a test answer and a ground truth.")
     
     # Knowledge Base Creation
     if not st.session_state.knowledge_base_created:

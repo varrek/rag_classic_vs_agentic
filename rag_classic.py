@@ -12,11 +12,55 @@ from knowledge_base import get_document_store
 class StreamingCallbackHandler(BaseCallbackHandler):
     """Callback handler for streaming LLM responses."""
     def __init__(self, callback_fn: Callable[[str], None]):
+        # Validate callback is callable
+        if not callable(callback_fn):
+            raise TypeError(f"callback_fn must be callable, got {type(callback_fn)}")
         self.callback_fn = callback_fn
         
     def on_llm_new_token(self, token: str, **kwargs) -> None:
         """Run on new LLM token."""
-        self.callback_fn(token)
+        try:
+            self.callback_fn(token)
+        except Exception as e:
+            print(f"Error in callback: {e}")
+            # Provide a detailed error message to help with debugging
+            import traceback
+            traceback.print_exc()
+    
+    # Override other potential callback methods that might be called
+    def on_chain_start(self, *args, **kwargs) -> None:
+        """Override to prevent 'ignore_chain' attribute error."""
+        pass
+    
+    def on_chain_end(self, *args, **kwargs) -> None:
+        """Override to prevent attribute errors."""
+        pass
+        
+    def on_chain_error(self, *args, **kwargs) -> None:
+        """Override to prevent attribute errors."""
+        pass
+
+def get_content_from_llm_response(response):
+    """
+    Extract string content from various types of LLM responses.
+    Handles both string responses and LangChain AIMessage objects.
+    
+    Args:
+        response: LLM response (string or AIMessage)
+        
+    Returns:
+        String content from the response
+    """
+    # If it's already a string, return it
+    if isinstance(response, str):
+        return response
+    
+    # If it's an AIMessage, extract the content
+    if hasattr(response, 'content'):
+        return response.content
+        
+    # If it's any other object with string representation, convert to string
+    return str(response)
 
 def retrieve_relevant_context(query: str, top_k: int = 5, fetch_k: int = None, filter_threshold: float = None) -> List[Document]:
     """
@@ -90,6 +134,12 @@ def format_context(documents: List[Document]) -> str:
 
 def run_classic_rag(query: str, stream_callback: Callable[[str], None]) -> None:
     """Run the classic RAG pipeline with a single retrieval step."""
+    # Validate callback is callable
+    if not callable(stream_callback):
+        print(f"Error: stream_callback must be callable, got {type(stream_callback)}")
+        # Create a default callback that does nothing
+        stream_callback = lambda x: None
+    
     # 1. Retrieve relevant documents
     documents = retrieve_relevant_context(query)
     
@@ -123,6 +173,6 @@ Answer:"""
     
     # 5. Generate answer
     formatted_prompt = prompt.format(context=context, query=query)
-    _ = llm.predict(formatted_prompt)  # The handler will take care of streaming
+    _ = llm.invoke(formatted_prompt)  # The handler will take care of streaming
     
     return 

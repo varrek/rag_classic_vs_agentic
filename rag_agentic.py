@@ -39,8 +39,9 @@ MAX_CONTEXT_LENGTH = 10000
 MAX_DOCUMENT_LENGTH = 1500
 
 # Google Custom Search API Key and Engine ID from Streamlit secrets
-GOOGLE_CSE_API_KEY = st.secrets.get("google_search", {}).get("GOOGLE_CSE_API_KEY", "")
-GOOGLE_CSE_ENGINE_ID = st.secrets.get("google_search", {}).get("GOOGLE_CSE_ENGINE_ID", "")
+# Update to match the keys in secrets.toml
+GOOGLE_CSE_API_KEY = st.secrets.get("google_search", {}).get("api_key", "")
+GOOGLE_CSE_ENGINE_ID = st.secrets.get("google_search", {}).get("search_engine_id", "")
 
 # Print statuses for debugging (will show in the Streamlit server logs)
 if GOOGLE_CSE_API_KEY:
@@ -72,6 +73,28 @@ ANIMAL_DATA = {
         "habitat": "African elephants inhabit savannas, forests, deserts, and marshes. Asian elephants prefer forested areas and transitional zones between forests and grasslands. Both species need large territories with access to water and abundant vegetation. Human encroachment has significantly reduced their natural habitats.",
     }
 }
+
+def get_content_from_llm_response(response):
+    """
+    Extract string content from various types of LLM responses.
+    Handles both string responses and LangChain AIMessage objects.
+    
+    Args:
+        response: LLM response (string or AIMessage)
+        
+    Returns:
+        String content from the response
+    """
+    # If it's already a string, return it
+    if isinstance(response, str):
+        return response
+    
+    # If it's an AIMessage, extract the content
+    if hasattr(response, 'content'):
+        return response.content
+        
+    # If it's any other object with string representation, convert to string
+    return str(response)
 
 def get_animal_data(query: str) -> Optional[Document]:
     """
@@ -150,7 +173,8 @@ def summarize_document(document: Document) -> Document:
 Summary:"""
     
     try:
-        summary = llm.predict(prompt)
+        response = llm.invoke(prompt)
+        summary = get_content_from_llm_response(response)
         return Document(
             page_content=summary,
             metadata={**document.metadata, "summarized": True}
@@ -213,7 +237,8 @@ def optimize_context(documents: List[Document], query: str) -> str:
             try:
                 # More aggressive summarization for the most important docs
                 llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
-                concise_summary = llm.predict(f"Summarize this text in 3-4 sentences, focusing on facts relevant to '{query}':\n\n{doc.page_content}")
+                response = llm.invoke(f"Summarize this text in 3-4 sentences, focusing on facts relevant to '{query}':\n\n{doc.page_content}")
+                concise_summary = get_content_from_llm_response(response)
                 
                 processed_doc = Document(
                     page_content=concise_summary,
@@ -247,12 +272,14 @@ def web_search(query: str, num_results: int = 3) -> List[Document]:
     try:
         # Verify we have required API credentials
         if not GOOGLE_CSE_API_KEY:
-            print("Web search not available: Google Custom Search API key not found")
+            print("Web search not available: Google Custom Search API key not found in secrets.toml (missing 'api_key' in [google_search])")
             return []
             
         if not GOOGLE_CSE_ENGINE_ID:
-            print("Web search not available: Google Custom Search Engine ID not found")
+            print("Web search not available: Google Custom Search Engine ID not found in secrets.toml (missing 'search_engine_id' in [google_search])")
             return []
+        
+        print(f"Performing web search with API key: {GOOGLE_CSE_API_KEY[:4]}... and engine ID: {GOOGLE_CSE_ENGINE_ID}")
         
         # Clean up and prepare the search query
         # Remove any numbering, phrases like "keywords include", etc.
@@ -375,7 +402,8 @@ What specific information is missing that would help answer this query?
 Be precise about the facts, data, or explanations needed:"""
     
     try:
-        missing_info_analysis = llm.predict(analysis_prompt)
+        response = llm.invoke(analysis_prompt)
+        missing_info_analysis = get_content_from_llm_response(response)
         
         # Now generate plausible information to fill the gaps
         generation_prompt = f"""You are a highly knowledgeable AI that has been asked to provide plausible information 
@@ -392,7 +420,8 @@ Missing information needed (based on analysis):
 
 Generate a factual-sounding, helpful document that addresses this information gap:"""
         
-        synthetic_content = llm.predict(generation_prompt)
+        response = llm.invoke(generation_prompt)
+        synthetic_content = get_content_from_llm_response(response)
         
         # Add clear labeling that this is synthetic data
         labeled_content = f"""[SYNTHETIC INFORMATION - Generated based on general knowledge, not from specific documents]
@@ -498,20 +527,21 @@ Your response (start with YES or NO):"""
     )
     
     # Get agent's analysis
-    response = llm.predict(prompt.format(query=query, context=context))
+    response = llm.invoke(prompt.format(query=query, context=context))
+    response_text = get_content_from_llm_response(response)
     
     # Parse the response
-    is_sufficient = response.strip().upper().startswith("YES")
+    is_sufficient = response_text.strip().upper().startswith("YES")
     
     result = {
         "is_sufficient": is_sufficient,
-        "analysis": response
+        "analysis": response_text
     }
     
     # If insufficient, extract the refined search query
     if not is_sufficient:
         # Try to find a refined search query in the response
-        lines = response.strip().split("\n")
+        lines = response_text.strip().split("\n")
         search_query = query  # Default to original query
         keywords = []
         
@@ -624,7 +654,8 @@ Your response should follow this format:
 5. Best approach: [Brief description of approach to answering this query]"""
 
     try:
-        planning_result = llm.predict(planning_prompt)
+        response = llm.invoke(planning_prompt)
+        planning_result = get_content_from_llm_response(response)
         
         # Parse the planning result to create a structured plan
         lines = planning_result.strip().split('\n')
@@ -654,7 +685,8 @@ Your response should follow this format:
         # generate some reasonable sub-queries
         if "complexity: Complex" in planning_result.lower() and not plan["sub_queries"]:
             subq_prompt = f"Break down this complex query into 2-3 specific sub-questions: {query}"
-            subq_result = llm.predict(subq_prompt)
+            response = llm.invoke(subq_prompt)
+            subq_result = get_content_from_llm_response(response)
             for line in subq_result.strip().split('\n'):
                 if line.strip().startswith(('1.', '2.', '3.', '-')) and len(line) > 5:
                     clean_line = line.lstrip('123.- ')
@@ -708,7 +740,8 @@ Your critique:
 """
     
     try:
-        critique = llm.predict(critique_prompt)
+        response = llm.invoke(critique_prompt)
+        critique = get_content_from_llm_response(response)
         
         # Based on the critique, improve the answer
         improvement_prompt = f"""Based on the following critique, improve the answer to the query.
@@ -725,7 +758,8 @@ Critique:
 
 Improved Answer:"""
         
-        improved_answer = llm.predict(improvement_prompt)
+        response = llm.invoke(improvement_prompt)
+        improved_answer = get_content_from_llm_response(response)
         return improved_answer
     
     except Exception as e:
@@ -815,7 +849,8 @@ Answer:"""
             )
             
             formatted_prompt = prompt.format(context=current_context, query=query)
-            initial_answer = llm.predict(formatted_prompt)
+            response = llm.invoke(formatted_prompt)
+            initial_answer = get_content_from_llm_response(response)
             
             # Self-critique if enabled
             final_answer = initial_answer
@@ -832,7 +867,7 @@ Answer:"""
             )
             
             repeat_prompt = f"Provide this exact answer to the user's question about animals: {final_answer}"
-            _ = streaming_llm.predict(repeat_prompt)
+            _ = streaming_llm.invoke(repeat_prompt)
             
             return
     
@@ -966,7 +1001,8 @@ Answer:"""
     
     # Generate initial answer
     formatted_prompt = prompt.format(context=current_context, query=query)
-    initial_answer = llm.predict(formatted_prompt)
+    response = llm.invoke(formatted_prompt)
+    initial_answer = get_content_from_llm_response(response)
     
     # PHASE 5: SELF-CRITIQUE (if enabled)
     final_answer = initial_answer
@@ -984,6 +1020,6 @@ Answer:"""
     
     # Now we ask the LLM to just repeat our already-critique answer
     repeat_prompt = f"Provide this exact answer to the user's question: {final_answer}"
-    _ = streaming_llm.predict(repeat_prompt)
+    _ = streaming_llm.invoke(repeat_prompt)
     
     return 
