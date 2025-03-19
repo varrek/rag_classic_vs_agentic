@@ -1,27 +1,26 @@
+"""
+Classic RAG Implementation
+
+This module implements a traditional Retrieval-Augmented Generation (RAG) approach, 
+where documents are retrieved based on vector similarity and then provided as context 
+to the language model for answer generation.
+"""
+
 import os
-from typing import List, Dict, Any, Optional, Callable
 import logging
+from typing import List, Dict, Any, Optional, Callable
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # LangChain imports for chains and prompts
-try:
-    from langchain_core.prompts import ChatPromptTemplate
-    from langchain_openai import ChatOpenAI
-    from langchain_core.output_parsers import StrOutputParser
-    from langchain_core.runnables import RunnablePassthrough
-    from langchain_core.documents import Document
-    from langchain.callbacks.base import BaseCallbackHandler
-except ImportError as e:
-    logger.error(f"Error importing LangChain components: {e}")
-
-# Local imports
-from knowledge_base import get_document_store
-
-# Set your OPENAI_API_KEY in your environment or directly here (not recommended for security)
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.documents import Document
+from langchain.callbacks.base import BaseCallbackHandler
 
 # Define the StreamingCallbackHandler class
 class StreamingCallbackHandler(BaseCallbackHandler):
@@ -38,10 +37,9 @@ class StreamingCallbackHandler(BaseCallbackHandler):
         except Exception as e:
             logger.error(f"Error in callback function: {e}")
 
-def get_retriever(k: int = 4):
+def get_retriever(vectorstore, k: int = 4):
     """Get the retriever from the document store."""
     try:
-        vectorstore = get_document_store()
         if vectorstore is None:
             logger.error("Document store is None")
             return None
@@ -73,13 +71,12 @@ def format_docs(docs: List[Document]) -> str:
 # Alias format_context to format_docs for backward compatibility 
 format_context = format_docs
 
-def retrieve_relevant_context(query: str, top_k: int = 3) -> List[Document]:
+def retrieve_relevant_context(retriever, query: str, top_k: int = 3) -> List[Document]:
     """Retrieve the most relevant documents for a query."""
     try:
         # Log the query
         logger.info(f"Retrieving documents for query: {query}")
         
-        retriever = get_retriever(k=top_k)
         if retriever:
             docs = retriever.invoke(query)
             logger.info(f"Retrieved {len(docs)} documents")
@@ -90,14 +87,11 @@ def retrieve_relevant_context(query: str, top_k: int = 3) -> List[Document]:
         logger.error(f"Error retrieving documents: {e}")
         return []
 
-def create_classical_rag_chain():
+def create_classical_rag_chain(retriever):
     """Create a classic RAG chain."""
     try:
         # Initialize the language model
         llm = ChatOpenAI(temperature=0)
-        
-        # Initialize the retriever
-        retriever = get_retriever(k=3)
         
         # Define the prompt template
         template = """You are a helpful assistant that answers questions based on the provided context.
@@ -136,17 +130,20 @@ Answer:"""
         logger.error(f"Error creating RAG chain: {e}")
         raise
 
-def query_rag(query: str) -> Dict[str, Any]:
+def query_rag(vectorstore, query: str) -> Dict[str, Any]:
     """Query the RAG system with a question."""
     try:
         # Log the start of processing
         logger.info(f"Processing RAG query: {query}")
         
-        chain = create_classical_rag_chain()
+        # Get the retriever
+        retriever = get_retriever(vectorstore, k=3)
+        
+        # Create the chain
+        chain = create_classical_rag_chain(retriever)
         
         # Get the documents from the retriever separately to include them in the output
         docs = []
-        retriever = get_retriever(k=3)
         
         if retriever:
             try:

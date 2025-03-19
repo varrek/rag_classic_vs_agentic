@@ -1,3 +1,11 @@
+"""
+Agentic RAG Implementation using LangGraph
+
+This module implements an agentic RAG approach using LangGraph for structured
+graph-based execution flow. It includes specialized agents for retrieval, 
+analysis, and answer generation, connected in a directed graph.
+"""
+
 import os
 from typing import List, Dict, Any, Optional, Callable, Sequence, Tuple, TypedDict, Annotated, Literal, Union
 from pathlib import Path
@@ -6,6 +14,10 @@ import streamlit as st
 import re
 import json
 from collections import defaultdict
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # LangChain and LangGraph imports
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
@@ -21,15 +33,11 @@ from langchain import hub
 from langgraph.graph import END, StateGraph, START
 from langgraph.prebuilt import ToolNode, tools_condition
 
-# Local imports
-from knowledge_base import get_document_store
-from rag_classic import StreamingCallbackHandler, retrieve_relevant_context, format_context
+# Local imports - adjusted for new module structure
+from modules.knowledge_base import get_document_store
+from modules.rag.classic import StreamingCallbackHandler, retrieve_relevant_context, format_context
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-# Configuration parameters (migrated from rag_agentic.py)
+# Configuration parameters 
 MAX_ITERATIONS = 5
 INITIAL_TOP_K = 5
 ADDITIONAL_TOP_K = 3
@@ -41,7 +49,7 @@ ENABLE_ANIMAL_DATA_TOOL = True
 MAX_CONTEXT_LENGTH = 10000
 MAX_DOCUMENT_LENGTH = 1500
 
-# Google Custom Search API credentials (migrated from rag_agentic.py)
+# Google Custom Search API credentials
 GOOGLE_CSE_API_KEY = st.secrets.get("google_search", {}).get("api_key", "")
 GOOGLE_CSE_ENGINE_ID = st.secrets.get("google_search", {}).get("search_engine_id", "")
 
@@ -51,12 +59,7 @@ if GOOGLE_CSE_API_KEY:
 else:
     logger.warning("Google Custom Search API Key not found in secrets")
 
-if GOOGLE_CSE_ENGINE_ID:
-    logger.info("Google Custom Search Engine ID found in secrets")
-else:
-    logger.warning("Google Custom Search Engine ID not found in secrets")
-
-# Animal data for specialized knowledge tool (migrated from rag_agentic.py)
+# Animal data for specialized knowledge tool
 ANIMAL_DATA = {
     "otter": {
         "behavior": "Otters are known for their playful behavior. They often float on their backs, using their chests as 'tables' for cracking open shellfish with rocks. They're one of the few animals that use tools. They're very social animals and live in family groups. Baby otters (pups) cannot swim when born and are taught by their mothers.",
@@ -76,33 +79,37 @@ ANIMAL_DATA = {
     }
 }
 
-# Define our state schema using TypedDict
-class AgentState(TypedDict):
-    """State for the agentic RAG system"""
-    messages: List[BaseMessage]
-    documents: List[Document]
-    current_iteration: int
-    is_sufficient: bool
-    refined_query: Optional[str]
-    final_answer: Optional[str]
-
-# Utility functions migrated from rag_agentic.py
-
 def get_content_from_llm_response(response):
-    """Extract string content from various types of LLM responses."""
-    # If it's already a string, return it
+    """
+    Extract string content from various types of LLM responses.
+    Handles both string responses and LangChain AIMessage objects.
+    """
     if isinstance(response, str):
         return response
-    
-    # If it's an AIMessage, extract the content
-    if hasattr(response, 'content'):
+    elif hasattr(response, "content"):
         return response.content
-        
-    # If it's any other object with string representation, convert to string
-    return str(response)
+    elif isinstance(response, dict) and "content" in response:
+        return response["content"]
+    elif isinstance(response, list) and len(response) > 0:
+        # For list responses, try to get content from the last item
+        last_item = response[-1]
+        if hasattr(last_item, "content"):
+            return last_item.content
+        elif isinstance(last_item, dict) and "content" in last_item:
+            return last_item["content"]
+    # Return empty string as fallback
+    return ""
 
 def get_animal_data(query: str) -> Optional[Document]:
-    """Retrieve specialized animal data for specific queries."""
+    """
+    Retrieve specialized animal data for specific queries.
+    
+    Args:
+        query: The user's query
+        
+    Returns:
+        Document with animal information or None if not applicable
+    """
     if not ENABLE_ANIMAL_DATA_TOOL:
         return None
         
@@ -147,63 +154,58 @@ def get_animal_data(query: str) -> Optional[Document]:
     
     return None
 
+# Define the AgentState TypedDict
+class AgentState(TypedDict):
+    """State for the agentic RAG system"""
+    messages: List[BaseMessage]
+    documents: List[Document]
+    current_iteration: int
+    is_sufficient: bool
+    refined_query: Optional[str]
+    final_answer: Optional[str]
+
 def is_animal_query(query: str) -> bool:
-    """Check if a query is specifically about animals in our database."""
+    """
+    Check if a query is about animals in our database.
+    
+    Args:
+        query: The user's query
+        
+    Returns:
+        True if query is about a known animal, False otherwise
+    """
+    if not ENABLE_ANIMAL_DATA_TOOL:
+        return False
+        
     query_lower = query.lower()
     
-    # Special case for otter-tool questions
-    if "otter" in query_lower and ("tool" in query_lower or "rock" in query_lower or "crack" in query_lower or "shellfish" in query_lower):
-        return True
-    
-    # Look for animal names in our database
+    # Check if any of our known animals are in the query
     for animal in ANIMAL_DATA.keys():
         if animal in query_lower:
-            # Look for specific question patterns
-            behavior_patterns = ["do", "behavior", "act", "play", "social", "sleep", "live"]
-            diet_patterns = ["eat", "food", "diet", "hunting", "prey", "feed"]
-            habitat_patterns = ["habitat", "environment", "live", "home", "found", "water", "land"]
-            tool_patterns = ["tool", "use", "rock", "crack", "open"]
+            return True
             
-            for pattern in behavior_patterns + diet_patterns + habitat_patterns + tool_patterns:
-                if pattern in query_lower:
-                    return True
-                    
-            # If query contains both animal name and a question, it's likely about the animal
-            question_markers = ["?", "what", "how", "why", "where", "when", "is", "are", "can", "do"]
-            for marker in question_markers:
-                if marker in query_lower:
-                    return True
-    
     return False
 
 def summarize_document(document: Document) -> Document:
-    """Summarize a document if it's too long to fit in context window."""
+    """
+    Summarize a long document to make it more concise.
+    
+    Args:
+        document: The document to summarize
+        
+    Returns:
+        Summarized document
+    """
+    # If document is not too long, return as is
     if len(document.page_content) <= MAX_DOCUMENT_LENGTH:
         return document
     
-    # Use GPT to create a concise summary
-    llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
-    
-    prompt = f"""Please summarize the following text concisely while preserving all key information, facts, numbers and details:
-    
-{document.page_content}
-
-Summary:"""
-    
-    try:
-        response = llm.invoke(prompt)
-        summary = get_content_from_llm_response(response)
-        return Document(
-            page_content=summary,
-            metadata={**document.metadata, "summarized": True}
-        )
-    except Exception as e:
-        logger.error(f"Error summarizing document: {e}")
-        # If summarization fails, truncate the document
-        return Document(
-            page_content=document.page_content[:MAX_DOCUMENT_LENGTH] + "... [truncated]",
-            metadata=document.metadata
-        )
+    # Create a truncated version
+    truncated_content = document.page_content[:MAX_DOCUMENT_LENGTH] + "... [content truncated for length]"
+    return Document(
+        page_content=truncated_content,
+        metadata=document.metadata
+    )
 
 def optimize_context(documents: List[Document], query: str) -> str:
     """Optimize context for the query by prioritizing and processing documents."""
@@ -228,92 +230,120 @@ def optimize_context(documents: List[Document], query: str) -> str:
     processed_docs = []
     total_length = 0
     
-    # Process high-scoring documents first
     for doc, score in sorted_docs:
         # Summarize long documents
-        if len(doc.page_content) > MAX_DOCUMENT_LENGTH:
-            processed_doc = summarize_document(doc)
-        else:
-            processed_doc = doc
+        processed_doc = summarize_document(doc)
         
         # Check if adding this document would exceed our context limit
-        doc_length = len(processed_doc.page_content)
-        if total_length + doc_length <= MAX_CONTEXT_LENGTH:
-            processed_docs.append(processed_doc)
-            total_length += doc_length
-        elif len(processed_docs) < 3:
-            # Always include at least 3 docs, even if we have to summarize aggressively
-            try:
-                # More aggressive summarization for the most important docs
-                llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
-                response = llm.invoke(f"Summarize this text in 3-4 sentences, focusing on facts relevant to '{query}':\n\n{doc.page_content}")
-                concise_summary = get_content_from_llm_response(response)
-                
+        if total_length + len(processed_doc.page_content) > MAX_CONTEXT_LENGTH:
+            # If we have at least one document, stop adding more
+            if processed_docs:
+                break
+            # If this is the first document and it's too long, summarize aggressively
+            else:
+                # Truncate to fit within the max context length
+                truncated_content = processed_doc.page_content[:MAX_CONTEXT_LENGTH - 100] + "... [truncated]"
                 processed_doc = Document(
-                    page_content=concise_summary,
-                    metadata={**doc.metadata, "summarized": "aggressive"}
+                    page_content=truncated_content,
+                    metadata=processed_doc.metadata
                 )
-                
-                processed_docs.append(processed_doc)
-                total_length += len(processed_doc.page_content)
-            except Exception as e:
-                logger.error(f"Error with aggressive summarization: {e}")
         
-        # Stop if we've added enough documents
-        if len(processed_docs) >= len(documents) or total_length >= MAX_CONTEXT_LENGTH:
-            break
+        # Add the document and update total length
+        processed_docs.append(processed_doc)
+        total_length += len(processed_doc.page_content)
     
-    # 3. Format the optimized context
-    return format_context(processed_docs)
+    # 3. Format the context string
+    # Include only a limited number of documents, prioritize the highest-scored ones
+    formatted_docs = []
+    for i, doc in enumerate(processed_docs):
+        source = doc.metadata.get("source", "Unknown source")
+        source_name = Path(source).name if isinstance(source, str) and "/" in source else source
+        formatted_doc = f"Document {i+1} (Source: {source_name}, Relevance: {'High' if i < 2 else 'Medium' if i < 4 else 'Low'}):\n{doc.page_content}"
+        formatted_docs.append(formatted_doc)
+    
+    context = "\n\n".join(formatted_docs)
+    
+    # Add a header with the number of documents
+    header = f"Retrieved {len(formatted_docs)} documents for query: '{query}'\n\n"
+    
+    return header + context
 
 def perform_self_critique(answer: str, query: str, context: str) -> str:
-    """Critique and improve an answer by checking for errors or missing information."""
-    llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
+    """
+    Perform self-critique on the generated answer to improve quality.
     
-    critique_prompt = f"""Evaluate the following answer to a query. Identify any issues such as:
-1. Factual errors or unsupported claims
-2. Missing important information from the context
-3. Irrelevant information
-4. Logical inconsistencies
-5. Incomplete response to the query
-
-Query: {query}
-
-Context snippets: 
-{context[:2000]}... [context truncated for brevity]
-
-Generated Answer:
-{answer}
-
-Your critique:
-"""
+    Args:
+        answer: The answer to critique
+        query: The original user query
+        context: The retrieval context
     
+    Returns:
+        Improved answer after self-critique
+    """
+    if not ENABLE_SELF_CRITIQUE:
+        return answer
+        
+    # Create a critique prompt
+    critique_template = """You are a critical evaluator reviewing an answer to a user's question.
+Question: {query}
+
+Provided Answer: {answer}
+
+Retrieved Context:
+{context}
+
+First, analyze if the answer:
+1. Directly addresses the user's question
+2. Is factually correct according to the context
+3. Avoids making up information not in the context
+4. Is complete and thorough
+5. Is well-organized and clear
+
+Then, identify any issues or ways to improve the answer.
+Finally, rewrite the answer to address these issues. The revised answer should be comprehensive, accurate, and well-structured.
+
+Your critique:"""
+
     try:
-        response = llm.invoke(critique_prompt)
-        critique = get_content_from_llm_response(response)
+        # Truncate context if needed to fit within token limits
+        truncated_context = context
+        if len(context) > 6000:  # Approximate value to avoid token limits
+            truncated_context = context[:6000] + "... [truncated]"
         
-        # Based on the critique, improve the answer
-        improvement_prompt = f"""Based on the following critique, improve the answer to the query.
-Maintain the same general structure but fix any identified issues.
-If the critique suggests the answer is good, you can keep it largely the same.
-
-Query: {query}
-
-Original Answer:
-{answer}
-
-Critique:
-{critique}
-
-Improved Answer:"""
+        # Format the prompt
+        critique_prompt = critique_template.format(
+            query=query,
+            answer=answer,
+            context=truncated_context
+        )
         
-        response = llm.invoke(improvement_prompt)
-        improved_answer = get_content_from_llm_response(response)
-        return improved_answer
-    
+        # Get the critique from the LLM
+        critique_model = ChatOpenAI(temperature=0)
+        critique_response = critique_model.invoke(critique_prompt)
+        critique_content = get_content_from_llm_response(critique_response)
+        
+        # Extract the improved answer from the critique
+        # Look for common patterns in the critique response
+        improved_answer = critique_content
+        
+        # Try to extract just the revised answer part
+        patterns = [
+            r"Revised Answer:\s*(.*)",
+            r"Improved Answer:\s*(.*)",
+            r"Rewritten Answer:\s*(.*)",
+            r"Here's the revised answer:\s*(.*)"
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, critique_content, re.DOTALL | re.IGNORECASE)
+            if match:
+                improved_answer = match.group(1).strip()
+                break
+        
+        return improved_answer if improved_answer else answer
     except Exception as e:
-        logger.error(f"Error performing self-critique: {e}")
-        return answer  # Return original if critique fails
+        logger.error(f"Error in self-critique: {e}")
+        return answer  # Return original answer if critique fails
 
 # Create the retriever tool for the graph
 def create_retriever_tools():
@@ -401,83 +431,81 @@ Think carefully about what information would help answer this query."""
 
 def retrieve(state: AgentState):
     """
-    Execute retrieval based on tool calls in the agent's response.
+    Retrieve documents based on the agent's decision.
     """
-    logger.info("Retrieve node: Retrieving documents")
+    logger.info("Retrieve node: Getting documents from vector store")
     
-    # Get the last message (which should be the agent's response)
+    # Extract information from the state
     messages = state["messages"]
+    documents = state["documents"]
+    current_iteration = state["current_iteration"]
+    
+    # Get the last message (agent's response)
     last_message = messages[-1]
+    content = get_content_from_llm_response(last_message)
     
-    # Initialize variables
-    new_documents = []
-    tool_response = None
-    
-    # Extract query from the tool call
-    query = ""
-    if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-        # Extract query from the first tool call
-        for tool_call in last_message.tool_calls:
-            if tool_call["name"] == "retrieve_documents":
-                try:
-                    args = tool_call["args"]
-                    if isinstance(args, str):
-                        # Try to parse JSON if it's a string
-                        try:
-                            args = json.loads(args)
-                        except:
-                            pass
-                    
-                    if isinstance(args, dict) and "query" in args:
-                        query = args["query"]
-                    else:
-                        # Fallback to the original query if args parsing fails
-                        query = state["messages"][0].content if isinstance(state["messages"][0], HumanMessage) else str(state["messages"][0])
-                except Exception as e:
-                    logger.error(f"Error extracting query from tool call: {e}")
-                    query = state["messages"][0].content if isinstance(state["messages"][0], HumanMessage) else str(state["messages"][0])
-                break
-    
-    if not query:
-        # Fallback to the original query if extraction fails
-        query = state["messages"][0].content if isinstance(state["messages"][0], HumanMessage) else str(state["messages"][0])
-    
-    # Log the retrieval query
-    logger.info(f"Retrieving documents with query: {query}")
-    
-    # Retrieve documents
-    documents = retrieve_relevant_context(query, top_k=INITIAL_TOP_K)
-    
-    # Check if we have specialized animal data
-    if is_animal_query(query):
-        animal_doc = get_animal_data(query)
-        if animal_doc:
-            documents.append(animal_doc)
-            logger.info(f"Added specialized animal data: {animal_doc.metadata.get('animal')}")
-    
-    # Optimize the context
-    if documents:
-        context = optimize_context(documents, query)
-        
-        # Create tool response
-        tool_response = ToolMessage(
-            content=context,
-            name="retrieve_documents",
-            tool_call_id="retrieval_call"
-        )
+    # Get the original query from the first message
+    if isinstance(messages[0], HumanMessage):
+        query = messages[0].content
+    elif isinstance(messages[0], tuple) and messages[0][0] == "user":
+        query = messages[0][1]
     else:
-        # No documents found
-        tool_response = ToolMessage(
-            content="No relevant documents found in the knowledge base.",
-            name="retrieve_documents",
-            tool_call_id="retrieval_call"
-        )
+        query = str(messages[0])
     
-    # Return updated state with the retrieved documents
+    # Determine if there are any tool calls in the last message
+    if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+        logger.info("Tool calls found in last message")
+        for tool_call in last_message.tool_calls:
+            if tool_call.name == "retrieve_documents":
+                # Extract the retrieval query from the tool call
+                retrieval_query = None
+                try:
+                    if isinstance(tool_call.args, dict) and "query" in tool_call.args:
+                        retrieval_query = tool_call.args["query"]
+                    elif isinstance(tool_call.args, str):
+                        # Try to parse as JSON
+                        args_dict = json.loads(tool_call.args)
+                        if "query" in args_dict:
+                            retrieval_query = args_dict["query"]
+                except Exception as e:
+                    logger.error(f"Error parsing tool call args: {e}")
+                
+                if retrieval_query:
+                    logger.info(f"Using retrieval query from tool call: {retrieval_query}")
+                    # Use the retrieval query to get documents
+                    vectorstore = get_document_store()
+                    retriever = vectorstore.as_retriever(search_kwargs={"k": INITIAL_TOP_K})
+                    new_docs = retriever.invoke(retrieval_query)
+                    documents.extend(new_docs)
+                    logger.info(f"Retrieved {len(new_docs)} documents using query: {retrieval_query}")
+                    
+                    # Check for animal-specific data
+                    if is_animal_query(retrieval_query):
+                        animal_doc = get_animal_data(retrieval_query)
+                        if animal_doc:
+                            documents.append(animal_doc)
+                            logger.info("Added specialized animal data document")
+                
+    # If no documents were retrieved through tool calls, use the original query
+    if not documents:
+        logger.info("No tool calls found or no documents retrieved, using original query")
+        vectorstore = get_document_store()
+        retriever = vectorstore.as_retriever(search_kwargs={"k": INITIAL_TOP_K})
+        documents = retriever.invoke(query)
+        logger.info(f"Retrieved {len(documents)} documents using original query")
+        
+        # Check for animal-specific data for the original query
+        if is_animal_query(query):
+            animal_doc = get_animal_data(query)
+            if animal_doc:
+                documents.append(animal_doc)
+                logger.info("Added specialized animal data document")
+    
+    # Return updated state
     return {
-        "messages": state["messages"] + [tool_response] if tool_response else state["messages"],
-        "documents": state["documents"] + documents,
-        "current_iteration": state["current_iteration"] + 1,
+        "messages": state["messages"],
+        "documents": documents,
+        "current_iteration": current_iteration,
         "is_sufficient": state["is_sufficient"],
         "refined_query": state["refined_query"],
         "final_answer": state["final_answer"]
@@ -485,141 +513,172 @@ def retrieve(state: AgentState):
 
 def analyze_sufficiency(state: AgentState):
     """
-    Analyze if the retrieved context is sufficient to answer the query.
+    Analyze if the retrieved documents are sufficient to answer the query.
     """
     logger.info("Analyze node: Checking if context is sufficient")
     
-    # Extract the relevant information
+    # Extract information from the state
     messages = state["messages"]
     documents = state["documents"]
+    current_iteration = state["current_iteration"]
     
-    # Get the original query
-    query = messages[0].content if isinstance(messages[0], HumanMessage) else str(messages[0])
+    # Get the original query from the first message
+    if isinstance(messages[0], HumanMessage):
+        query = messages[0].content
+    elif isinstance(messages[0], tuple) and messages[0][0] == "user":
+        query = messages[0][1]
+    else:
+        query = str(messages[0])
     
-    # Get the context from documents
+    # Format the documents into a context string
     context = optimize_context(documents, query)
     
-    # Create a prompt for analyzing context sufficiency
-    prompt_template = """You are an AI agent that determines if the retrieved context is sufficient to answer a user's question.
-Analyze the context and determine if it contains enough information to provide a complete and accurate answer.
+    # Check if the context is sufficient using LLM
+    sufficiency_template = """You are a helpful assistant evaluating if the retrieved context is sufficient to answer a question.
 
 Question: {query}
 
 Retrieved Context:
 {context}
 
-Please evaluate if this context is sufficient to answer the question fully.
-If it is sufficient, respond with "YES" followed by a brief explanation.
-If it is not sufficient, respond with "NO" followed by:
-1. What specific information is missing
-2. A refined search query that would help find the missing information
+First, analyze what information is needed to answer the question completely and accurately.
+Then, evaluate if the retrieved context contains the necessary information.
 
-Your response (start with YES or NO):"""
+If the context is sufficient to provide a complete and accurate answer, respond with "SUFFICIENT".
+If the context is missing important information, respond with "INSUFFICIENT" followed by a specific refined search query 
+that would help retrieve the missing information.
+
+Your evaluation:"""
     
-    prompt = PromptTemplate(
-        template=prompt_template,
-        input_variables=["query", "context"]
-    )
-    
-    # Use LLM to analyze context sufficiency
-    llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
-    
-    # Get analysis
-    response = llm.invoke(prompt.format(query=query, context=context))
-    analysis = get_content_from_llm_response(response)
-    
-    # Parse the response
-    is_sufficient = analysis.strip().upper().startswith("YES")
-    
-    # Extract refined query if context is insufficient
-    refined_query = query  # default to original query
-    if not is_sufficient:
-        # Try to find a refined search query in the response
-        lines = analysis.strip().split("\n")
-        for i, line in enumerate(lines):
-            # Look for lines with search query information
-            if any(term in line.lower() for term in ["search query", "refined query", "query:"]):
-                if i + 1 < len(lines):
-                    refined_query = lines[i + 1].strip()
-                    # Clean up the search query
-                    refined_query = re.sub(r'^\d+\.\s*', '', refined_query)  # Remove numbering
-                    refined_query = refined_query.strip('"\'')  # Remove quotes
-                    break
-    
-    # Create analysis message
-    analysis_message = AIMessage(content=analysis)
-    
-    # Return updated state with analysis results
-    return {
-        "messages": state["messages"] + [analysis_message],
-        "documents": state["documents"],
-        "current_iteration": state["current_iteration"],
-        "is_sufficient": is_sufficient,
-        "refined_query": refined_query,
-        "final_answer": state["final_answer"]
-    }
+    # Invoke the model to evaluate context sufficiency
+    try:
+        # Create the prompt with the current context
+        sufficiency_prompt = sufficiency_template.format(query=query, context=context or "No relevant context found.")
+        
+        # Get the evaluation from the LLM
+        llm = ChatOpenAI(temperature=0)
+        sufficiency_response = llm.invoke(sufficiency_prompt)
+        sufficiency_eval = get_content_from_llm_response(sufficiency_response)
+        
+        # Check if the context is deemed sufficient
+        is_sufficient = "SUFFICIENT" in sufficiency_eval.upper()
+        
+        # Extract refined query if context is insufficient
+        refined_query = None
+        if not is_sufficient and "INSUFFICIENT" in sufficiency_eval.upper():
+            # Try to extract the refined query - look for text after "INSUFFICIENT"
+            insufficient_pattern = r"INSUFFICIENT\s*(.*)"
+            match = re.search(insufficient_pattern, sufficiency_eval, re.IGNORECASE | re.DOTALL)
+            if match:
+                refined_query = match.group(1).strip().split("\n")[0].strip()
+                # Remove any quotation marks around the query
+                refined_query = refined_query.strip('"\'')
+        
+        # Log the result
+        if is_sufficient:
+            logger.info("Context deemed sufficient to answer query")
+        else:
+            logger.info(f"Context deemed insufficient. Refined query: {refined_query}")
+        
+        # Increment iteration for the next round
+        next_iteration = current_iteration + 1
+        
+        # Return updated state
+        return {
+            "messages": state["messages"],
+            "documents": state["documents"],
+            "current_iteration": next_iteration,
+            "is_sufficient": is_sufficient,
+            "refined_query": refined_query,
+            "final_answer": state["final_answer"]
+        }
+    except Exception as e:
+        logger.error(f"Error analyzing context sufficiency: {e}")
+        # In case of error, assume context is sufficient to prevent infinite loops
+        return {
+            "messages": state["messages"],
+            "documents": state["documents"],
+            "current_iteration": current_iteration + 1,
+            "is_sufficient": True,
+            "refined_query": None,
+            "final_answer": state["final_answer"]
+        }
 
 def generate_answer(state: AgentState):
     """
-    Generate the final answer based on the retrieved context.
+    Generate the final answer based on the retrieved documents.
     """
     logger.info("Generate node: Creating final answer")
     
-    # Extract relevant information
+    # Extract information from the state
     messages = state["messages"]
     documents = state["documents"]
     
-    # Get the original query
-    query = messages[0].content if isinstance(messages[0], HumanMessage) else str(messages[0])
+    # Get the original query from the first message
+    if isinstance(messages[0], HumanMessage):
+        query = messages[0].content
+    elif isinstance(messages[0], tuple) and messages[0][0] == "user":
+        query = messages[0][1]
+    else:
+        query = str(messages[0])
     
-    # Get the optimized context
+    # Format the documents into a context string
     context = optimize_context(documents, query)
     
-    # Create the prompt for answer generation
-    prompt_template = """You are a helpful AI assistant that answers questions based on the provided context.
-Answer the question based ONLY on the provided context.
-If the information needed to answer the question is not in the context, acknowledge what you do know from the context
-and then clearly state: "I don't have enough information to fully answer this question."
+    # Create the answer generation prompt
+    answer_template = """You are a helpful assistant that answers questions based on the provided context.
+If the context doesn't contain the answer, just say you don't know and keep your answer short.
+Do not make up information that is not provided in the context.
 
 Context:
 {context}
 
 Question: {query}
 
-Answer the question thoroughly and thoughtfully, making sure to address all parts of the question.
-If the answer is a simple yes/no, provide that answer first, then explain the reasoning based on the context.
-
-Answer:"""
+Provide a comprehensive, accurate, and well-structured answer to the question based on the provided context."""
     
-    prompt = PromptTemplate(
-        template=prompt_template,
-        input_variables=["context", "query"]
-    )
-    
-    # Generate initial answer
-    llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
-    formatted_prompt = prompt.format(context=context, query=query)
-    response = llm.invoke(formatted_prompt)
-    initial_answer = get_content_from_llm_response(response)
-    
-    # Perform self-critique if enabled
-    final_answer = initial_answer
-    if ENABLE_SELF_CRITIQUE:
-        logger.info("Applying self-critique to improve answer")
-        final_answer = perform_self_critique(initial_answer, query, context)
-    
-    # Create answer message
-    answer_message = AIMessage(content=final_answer)
-    
-    # Return the final state with the answer
-    return {
-        "messages": state["messages"] + [answer_message],
-        "documents": state["documents"],
-        "current_iteration": state["current_iteration"],
-        "is_sufficient": state["is_sufficient"],
-        "refined_query": state["refined_query"],
-        "final_answer": final_answer
-    }
+    try:
+        # Create the prompt with the retrieved context
+        answer_prompt = answer_template.format(
+            context=context or "No relevant context found to answer this query.",
+            query=query
+        )
+        
+        # Generate the answer
+        llm = ChatOpenAI(temperature=0)
+        answer_response = llm.invoke(answer_prompt)
+        initial_answer = get_content_from_llm_response(answer_response)
+        
+        # Apply self-critique if enabled
+        if ENABLE_SELF_CRITIQUE:
+            logger.info("Applying self-critique to improve answer")
+            final_answer = perform_self_critique(initial_answer, query, context)
+        else:
+            final_answer = initial_answer
+        
+        # Create an AI message with the final answer
+        answer_message = AIMessage(content=final_answer)
+        
+        # Return updated state with the answer
+        return {
+            "messages": state["messages"] + [answer_message],
+            "documents": state["documents"],
+            "current_iteration": state["current_iteration"],
+            "is_sufficient": state["is_sufficient"],
+            "refined_query": state["refined_query"],
+            "final_answer": final_answer
+        }
+    except Exception as e:
+        logger.error(f"Error generating answer: {e}")
+        error_message = f"I encountered an error while generating an answer: {str(e)}"
+        return {
+            "messages": state["messages"] + [AIMessage(content=error_message)],
+            "documents": state["documents"],
+            "current_iteration": state["current_iteration"],
+            "is_sufficient": state["is_sufficient"],
+            "refined_query": state["refined_query"],
+            "final_answer": error_message
+        }
 
 # Define edge routing conditions
 
@@ -643,18 +702,19 @@ def should_continue_retrieval(state: AgentState) -> Literal["retrieve_more", "ge
 
 def check_tools_condition(state: AgentState) -> Literal["tools", "end"]:
     """
-    Check if the agent wants to use tools.
+    Check if the agent used tools in its response.
     """
-    # Get the last message
-    last_message = state["messages"][-1]
+    messages = state["messages"]
+    last_message = messages[-1]
     
-    # Check if the message has tool calls
+    # Check if the last message contains tool calls
     if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-        logger.info("Agent decided to use tools")
+        logger.info("Agent used tools, proceeding to retrieval")
         return "tools"
-    else:
-        logger.info("Agent decided not to use tools")
-        return "end"
+    
+    # No tools used, proceed to generate
+    logger.info("Agent did not use tools, proceeding to generate answer")
+    return "end"
 
 # Build the LangGraph
 def build_rag_graph():
@@ -768,7 +828,6 @@ def run_agentic_rag(query: str, stream_callback: Callable[[str], None]) -> None:
                             stream_callback(last_message.content)
         
         logger.info("Agentic RAG processing complete")
-    
     except Exception as e:
-        logger.error(f"Error in agentic RAG: {e}", exc_info=True)
-        stream_callback(f"\n\n❌ Error in Agentic RAG: {str(e)}")
+        logger.error(f"Error in agentic RAG: {e}")
+        stream_callback(f"\n\nError: {str(e)}") 

@@ -47,7 +47,7 @@ echo -e "${GREEN}Requirements installed successfully.${NC}"
 
 # Run the test script
 echo -e "${YELLOW}Running tests...${NC}"
-python test_rag.py
+python tests/test_rag.py
 TEST_RESULT=$?
 
 if [ $TEST_RESULT -eq 0 ]; then

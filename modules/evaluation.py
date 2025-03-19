@@ -1,8 +1,15 @@
+"""
+Evaluation Module
+
+This module provides functionality for evaluating and comparing RAG answers using 
+semantic similarity and RAGAS metrics.
+"""
+
 import os
+import logging
 from typing import Dict, List, Any, Optional, Tuple
 import numpy as np
 import traceback
-import logging
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -53,13 +60,6 @@ try:
     from langchain_core.documents import Document
 except ImportError as e:
     logger.error(f"Error importing LangChain: {e}")
-
-# Local imports
-from knowledge_base import get_random_example_questions
-from rag_classic import query_rag
-
-# Load environment variable for OpenAI API key
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 def get_sentence_model():
     """Get or initialize a sentence transformer model for computing similarity."""

@@ -33,7 +33,7 @@ This guide addresses common issues you might encounter when running the RAG Comp
 2. Try a different sample question
 3. Restart the application using the restart script:
    ```bash
-   ./restart_streamlit.sh
+   ./scripts/restart_streamlit.sh
    ```
 4. Check the terminal for error messages or logs
 
@@ -151,7 +151,7 @@ If you've tried the solutions above and still have problems:
    - Terminal output/logs
    - System information (OS, Python version)
 
-2. Try running the simplified test app (`simple_test.py`) to isolate the issue:
+2. Try running the simplified test app (`tests/simple_test.py`) to isolate the issue:
    ```bash
-   streamlit run simple_test.py
+   streamlit run tests/simple_test.py
    ``` 

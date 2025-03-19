@@ -7,12 +7,57 @@ This repository contains a Retrieval-Augmented Generation (RAG) comparison appli
 - **Knowledge Base Management**: Create and manage a FAISS vector store of documents
 - **Classic RAG Implementation**: Traditional retrieval followed by generation
 - **Agentic RAG Implementation**: Advanced RAG with planning, self-critique, and specialized tools
-  - **Original Implementation**: Custom-built agentic RAG with iterative retrieval
-  - **LangGraph Implementation**: Graph-based agentic RAG using LangGraph
+  - **LangGraph Implementation**: Graph-based agentic RAG using LangGraph (Default)
+  - **Original Implementation**: Custom-built agentic RAG with iterative retrieval (Legacy)
 - **Side-by-Side Comparison**: View and compare results from both approaches
 - **Interactive UI**: Streamlit-based interface with real-time processing logs
 - **Semantic Evaluation**: Compare answers using semantic similarity metrics
 - **Graph Visualization**: Visualize the LangGraph structure of the agentic RAG system
+
+## Project Structure
+
+The project follows a modular structure for better organization and maintainability:
+
+```
+rags_presentation/
+├── app.py                    # Main Streamlit application
+├── modules/                  # Core modules directory
+│   ├── __init__.py           # Package initialization
+│   ├── utils.py              # Common utilities and helper functions
+│   ├── evaluation.py         # Evaluation utilities
+│   ├── retrieval.py          # Document retrieval functionality
+│   ├── knowledge_base.py     # Knowledge base and vector store management
+│   ├── rag/                  # RAG implementations
+│   │   ├── __init__.py       # RAG package initialization
+│   │   ├── factory.py        # Factory pattern for selecting implementations
+│   │   ├── classic.py        # Classic RAG implementation
+│   │   ├── agentic/          # Agentic RAG implementations
+│   │   │   ├── __init__.py   # Agentic package initialization
+│   │   │   └── original.py   # Original agentic implementation (refactored)
+│   │   ├── langgraph/        # LangGraph implementations
+│   │   │   ├── __init__.py   # LangGraph package initialization
+│   │   │   └── implementation.py # LangGraph-based implementation (refactored)
+├── scripts/                  # Utility scripts
+│   ├── increase_inotify_watches.sh  # Fix Linux inotify limit issues
+│   ├── rebuild_kb.py         # Rebuild knowledge base script
+│   ├── restart_streamlit.sh  # Restart Streamlit application
+│   ├── run_app.sh            # Run the application with optimized settings
+│   └── setup_and_test.sh     # Setup environment and run tests
+├── tests/                    # Test scripts
+│   ├── test_rag.py           # RAG functionality tests
+│   ├── test_streamlit_fixes.py # Streamlit compatibility tests
+│   ├── simple_test.py        # Simple test application
+│   └── check_faiss.py        # FAISS index checking utility
+├── docs/                     # Documentation
+│   ├── CHANGES.md            # Changelog
+│   ├── TROUBLESHOOTING.md    # Troubleshooting guide
+│   └── examples/             # Example usage patterns
+├── data/                     # Data directory for knowledge base
+├── index/                    # Vector store index directory
+├── requirements.txt          # Python dependencies
+├── LICENSE                   # MIT license
+└── README.md                 # This file
+```
 
 ## RAG Approaches Compared
 
@@ -27,45 +72,49 @@ This repository contains a Retrieval-Augmented Generation (RAG) comparison appli
 - Dynamic context building based on intermediate results
 - Self-critique and validation of generated answers
 
-#### LangGraph Implementation
+#### LangGraph Implementation (Default)
 - Graph-based execution flow using LangGraph
-- State management with TypedDict for better type safety
-- Clearly defined nodes and edges for easier visualization and debugging
-- Explicit decision-making conditions for graph traversal
-- More modular and maintainable code structure
+- State management with BaseModel for better type safety
+- Clearly defined nodes, edges, and state for easier visualization and debugging
+- Explicit decision-making in the evaluation node for determining next actions
+- More modular and maintainable code structure with separation of concerns
 
-## Project Structure
+#### Original Implementation (Legacy)
+- Procedural execution flow with iterative refinement
+- Function-based approach with custom state management
+- Multiple specialized retrieval strategies based on query type
+- Synthetic data generation for handling edge cases
 
-- `app.py` - Streamlit web application
-- `knowledge_base.py` - Knowledge base creation and management
-- `rag_classic.py` - Classic RAG implementation
-- `rag_agentic.py` - Original agentic RAG implementation
-- `rag_langgraph.py` - LangGraph-based agentic RAG implementation
-- `evaluation.py` - Evaluation utilities and similarity metrics
-- `test_rag.py` - Testing script
-- `setup_and_test.sh` - Setup and test script
-- `restart_streamlit.sh` - Streamlit restart script
-- `increase_inotify_watches.sh` - Script to increase inotify watch limits
+## Using the RAG Factory
 
-## Recent Improvements
+The new modular design includes a factory pattern for easy switching between implementations:
 
-The application has been updated with significant improvements:
+```python
+from modules.rag.factory import RAGFactory, run_rag
 
-- **LangGraph Integration**: Added a graph-based agentic RAG implementation using LangGraph
-- **Implementation Toggle**: Switch between original and LangGraph implementations
-- **Graph Visualization**: View the structure of the LangGraph implementation
-- **Enhanced UI Stability**: Eliminated screen flickering and UI glitches during processing
-- **Real-time Processing Logs**: Shows logs during RAG processing
-- **Stable Button Behavior**: Improved button state management during processing
-- **Error Handling**: Better error handling and recovery mechanisms
-- **inotify Limit Fix**: Solution for Linux inotify watch limit issues
-- **Session State Management**: Fixed issues with state persistence
+# Get available implementations
+implementations = RAGFactory.list_available_implementations()
+print(f"Available implementations: {implementations}")
+
+# Run a specific implementation
+result = run_rag(
+    query="What is the capital of France?", 
+    implementation="langgraph",  # or "agentic" for original implementation
+    config={"max_iterations": 3}
+)
+
+# Compare multiple implementations
+comparison = RAGFactory.compare_implementations(
+    query="What is the capital of France?",
+    implementations=["agentic", "langgraph"]
+)
+```
 
 ## Setup
 
 1. **Environment Setup**:
    ```bash
-   ./setup_and_test.sh
+   ./scripts/setup_and_test.sh
    ```
    This will:
    - Create a virtual environment (`venv_latest`)
@@ -80,7 +129,7 @@ The application has been updated with significant improvements:
 
 3. **Run the Application**:
    ```bash
-   ./restart_streamlit.sh
+   ./scripts/restart_streamlit.sh
    ```
    This script will:
    - Kill any existing Streamlit processes
@@ -91,7 +140,7 @@ The application has been updated with significant improvements:
 If you encounter the error "OSError: [Errno 28] inotify watch limit reached", you can increase the system's inotify watch limit by running:
 
 ```bash
-sudo bash increase_inotify_watches.sh
+sudo bash scripts/increase_inotify_watches.sh
 ```
 
 This script will:
@@ -115,6 +164,7 @@ The interface allows you to:
 2. Process the query with both Classic and Agentic RAG
 3. View real-time processing logs for both approaches
 4. Compare the generated answers side-by-side
+5. Toggle between different Agentic RAG implementations (default: LangGraph)
 
 ### Evaluation
 
@@ -125,22 +175,27 @@ The comparison tab provides:
 
 ## Dependencies
 
-- LangChain 0.3.21
-- LangChain OpenAI 0.3.9
+- LangChain 0.3.21+
+- LangChain OpenAI 0.3.9+
+- LangGraph 0.0.38+
 - Streamlit 2.0.0+
 - FAISS for vector storage
 - Sentence Transformers for semantic evaluation
-- RAGAS 0.2.14 for RAG evaluation metrics
+- RAGAS 0.2.14+ for RAG evaluation metrics
 - PyTorch (CPU mode for lower resource usage)
+- ChromaDB 0.4.18+ for vector storage (optional)
 
 ## Troubleshooting
 
 Common issues and solutions:
 
-1. **inotify watch limit errors**: Run `increase_inotify_watches.sh` as described above
+1. **inotify watch limit errors**: Run `scripts/increase_inotify_watches.sh` as described above
 2. **UI not updating**: Use the Reset button to clear the application state
 3. **Questions remain disabled after processing**: Check logs for errors, reset the application
 4. **PyTorch errors**: The application is configured to use PyTorch in CPU mode with minimal resources
+5. **ModuleNotFoundError**: Make sure all dependencies are installed with `pip install -r requirements.txt`
+
+See `docs/TROUBLESHOOTING.md` for more detailed guidance.
 
 ## License
 
@@ -151,4 +206,5 @@ This project is open source and available under the MIT license.
 This project demonstrates RAG techniques described in research papers by:
 - Lewis et al., "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks" (2020)
 - Gao et al., "Precise Zero-Shot Dense Retrieval without Relevance Labels" (2023)
-- Shao et al., "Enhancing RAG with Agent Techniques" (2023) 
+- Shao et al., "Enhancing RAG with Agent Techniques" (2023)
+- LangChain & LangGraph Documentation and Examples (2023-2024) 

@@ -1,3 +1,13 @@
+"""
+Knowledge Base Management Module
+
+This module handles the creation, management, and access to the knowledge base.
+It includes functions for:
+- Creating a FAISS vector store from document files
+- Loading and retrieving documents
+- Managing QA pairs for testing and examples
+"""
+
 import os
 from pathlib import Path
 import glob
@@ -5,6 +15,11 @@ import pandas as pd
 import random
 from typing import List, Dict, Any, Tuple, Callable, Optional
 import json
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # LangChain imports
 from langchain_community.document_loaders import TextLoader
@@ -44,9 +59,9 @@ def load_clean_text_files() -> List[Document]:
                 doc.metadata["source"] = str(file_path)
             
             documents.extend(docs)
-            print(f"Successfully loaded {file_path}")
+            logger.info(f"Successfully loaded {file_path}")
         except Exception as e:
-            print(f"Error loading {file_path}: {e}")
+            logger.error(f"Error loading {file_path}: {e}")
     
     return documents
 
@@ -62,7 +77,7 @@ def load_qa_pairs() -> List[Dict[str, str]]:
         
         for encoding in encodings:
             try:
-                print(f"Trying to load {file_path} with {encoding} encoding...")
+                logger.info(f"Trying to load {file_path} with {encoding} encoding...")
                 df = pd.read_csv(file_path, sep='\t', encoding=encoding)
                 
                 # Process each row
@@ -76,16 +91,16 @@ def load_qa_pairs() -> List[Dict[str, str]]:
                         }
                         all_qa_pairs.append(qa_pair)
                     except Exception as e:
-                        print(f"Error processing row in {file_path}: {e}")
+                        logger.error(f"Error processing row in {file_path}: {e}")
                 
-                print(f"Successfully loaded {file_path} with {encoding} encoding")
+                logger.info(f"Successfully loaded {file_path} with {encoding} encoding")
                 loaded = True
                 break  # Break the encoding loop if successful
             except Exception as e:
-                print(f"Failed to load {file_path} with {encoding} encoding: {e}")
+                logger.warning(f"Failed to load {file_path} with {encoding} encoding: {e}")
         
         if not loaded:
-            print(f"Could not load {file_path} with any encoding")
+            logger.error(f"Could not load {file_path} with any encoding")
     
     return all_qa_pairs
 
@@ -198,10 +213,10 @@ def get_document_store():
         vectorstore = FAISS.load_local(str(FAISS_INDEX_PATH), embeddings, allow_dangerous_deserialization=True)
         return vectorstore
     except Exception as e:
-        print(f"Error loading FAISS index: {e}")
+        logger.error(f"Error loading FAISS index: {e}")
         
         # Create a fallback document store with a few documents from our data
-        print("Creating fallback document store...")
+        logger.info("Creating fallback document store...")
         try:
             # Load a few documents
             documents = load_clean_text_files()[:5]  # Just load a few for testing
@@ -216,7 +231,7 @@ def get_document_store():
             temp_vectorstore = FAISS.from_documents(documents, embeddings)
             return temp_vectorstore
         except Exception as inner_e:
-            print(f"Failed to create fallback index: {inner_e}")
+            logger.error(f"Failed to create fallback index: {inner_e}")
             # Create an extremely minimal index with just one document
             document = Document(
                 page_content="Index loading failed. This is a fallback document.",

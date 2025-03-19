@@ -2,26 +2,27 @@ import os
 import sys
 import logging
 
+# Import our utility functions first to set up the environment properly
+from modules.utils import (
+    fix_torch_module_scanning,
+    disable_pytorch_warnings, 
+    setup_logging,
+    check_api_key,
+    setup_directory_structure,
+    initialize_app,
+    suppress_streamlit_thread_warnings
+)
+
+# Suppress the ThreadPoolExecutor warning in Streamlit
+suppress_streamlit_thread_warnings()
+
 # Fix for PyTorch module scanning issue in Streamlit
-# This modifies sys.modules to prevent Streamlit from scanning torch.classes
-try:
-    import torch
-    
-    # Create a custom module to prevent _path access
-    class CustomModule:
-        def __init__(self):
-            self.__path__ = None
-            
-    # Patch torch.classes to prevent Streamlit scanning errors
-    if 'torch.classes' in sys.modules:
-        sys.modules['torch.classes.__path__'] = CustomModule()
-    
-    # Configure PyTorch to reduce memory usage
-    torch.set_grad_enabled(False)
-    if hasattr(torch, 'set_num_threads'):
-        torch.set_num_threads(1)
-except ImportError:
-    pass
+fix_torch_module_scanning()
+disable_pytorch_warnings()
+
+# Configure logging
+setup_logging(log_level="INFO")
+logger = logging.getLogger(__name__)
 
 # Continue with normal imports
 import streamlit as st
@@ -30,23 +31,18 @@ import random
 import hashlib
 from typing import Dict, List, Any, Callable, Optional, Tuple
 
-# Local imports
-from knowledge_base import (
+# Local imports using new modular structure
+from modules.knowledge_base import (
     check_knowledge_base_exists, 
     create_knowledge_base, 
-    get_random_example_questions
+    get_random_example_questions,
+    get_document_store
 )
-from rag_classic import query_rag
-from rag_agentic import run_agentic_rag as run_agentic_rag_original
-from rag_langgraph import run_agentic_rag as run_agentic_rag_langgraph
-from evaluation import compare_answers
+from modules.rag.classic import query_rag
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# Import the factory for managing RAG implementations
+from modules.rag.factory import RAGFactory, run_rag
+from modules.evaluation import compute_similarity, compare_answers
 
 # Set page configuration with a clean slate
 st.set_page_config(
@@ -71,8 +67,8 @@ def init_session_state():
         'classic_logs': "🔍 Waiting to start Classic RAG processing...\n",
         'agentic_logs': "🔍 Waiting to start Agentic RAG processing...\n",
         'processing_complete': False,
-        'app_version': "1.0.2",
-        'use_langgraph': True,  # Default to using the new LangGraph implementation
+        'app_version': "1.1.0",
+        'use_langgraph': True,  # Default to using the LangGraph implementation
     }
     
     # Initialize each variable if not already present
@@ -82,22 +78,6 @@ def init_session_state():
 
 # Initialize session state
 init_session_state()
-
-# Check for OpenAI API key
-def check_api_key():
-    """Check if the OpenAI API key is set."""
-    api_key = os.environ.get("OPENAI_API_KEY", "")
-    
-    if not api_key:
-        st.error("OpenAI API key not found. Please enter it below:")
-        user_api_key = st.text_input("Enter your OpenAI API key:", type="password")
-        if user_api_key:
-            os.environ["OPENAI_API_KEY"] = user_api_key
-            st.success("API key set successfully! Reloading app...")
-            time.sleep(1)
-            st.rerun()
-        return False
-    return True
 
 # Function to create knowledge base with progress reporting
 def initialize_knowledge_base():
@@ -173,9 +153,15 @@ def process_query(query: str):
         status_placeholder.info("Processing with Classic RAG...")
         update_classic_logs("Retrieving relevant documents from knowledge base...")
         
+        # Get the document store
+        vectorstore = get_document_store()
+        if vectorstore is None:
+            update_classic_logs("❌ Error: Could not access document store")
+            raise ValueError("Document store is not available")
+        
         # Process query
         logger.info("Calling query_rag function")
-        result = query_rag(query)
+        result = query_rag(vectorstore, query)
         logger.info(f"Classic RAG processing completed with {len(result['documents'])} documents")
         
         # Store results in session state
@@ -193,21 +179,38 @@ def process_query(query: str):
     # Update status for Agentic RAG
     status_placeholder.info("Processing with Agentic RAG...")
     
-    # Select the appropriate implementation based on the session state
-    agentic_rag_implementation = run_agentic_rag_langgraph if st.session_state.get('use_langgraph', True) else run_agentic_rag_original
+    # Select the implementation based on session state
+    implementation = "langgraph" if st.session_state.get('use_langgraph', True) else "agentic"
     
     # Update logs with the implementation being used
-    implementation_name = "LangGraph" if st.session_state.get('use_langgraph', True) else "Original"
-    update_agentic_logs(f"Using Agentic RAG implementation: {implementation_name}\n\n")
+    implementation_name = "LangGraph" if st.session_state.get('use_langgraph', True) else "Original Agentic"
+    update_agentic_logs(f"Using {implementation_name} RAG implementation\n\n")
     
-    # Then process Agentic RAG
+    # Configure the callback for streaming output
+    def agentic_callback(partial_response: str):
+        update_agentic_logs(partial_response)
+    
+    # Then process Agentic RAG using the factory
     try:
-        # Process with the selected Agentic RAG implementation - this will stream results via callback
-        agentic_rag_implementation(query, update_agentic_logs)
-        logger.info("Agentic RAG processing completed")
+        # Configure with streaming callback
+        config = {
+            "stream_handler": agentic_callback,
+            "max_iterations": 3,
+            "enable_web_search": False,
+            "enable_synthetic_data": True
+        }
+        
+        # Run the selected implementation through the factory
+        result = run_rag(query, implementation=implementation, config=config)
+        
+        # In case the streamer doesn't capture everything, make sure the full answer is set
+        if "answer" in result and result["answer"]:
+            st.session_state.agentic_answer = result["answer"]
+            
+        logger.info(f"{implementation_name} RAG processing completed")
     except Exception as e:
-        logger.error(f"Error in Agentic RAG: {e}", exc_info=True)
-        error_msg = f"Error in Agentic RAG: {str(e)}"
+        logger.error(f"Error in {implementation_name} RAG: {e}", exc_info=True)
+        error_msg = f"Error in {implementation_name} RAG: {str(e)}"
         update_agentic_logs(f"\n\n❌ {error_msg}")
         st.session_state.agentic_answer = f"Error occurred: {str(e)}"
     
@@ -227,8 +230,20 @@ def process_query(query: str):
 def main():
     """Main app function."""
     
+    # Initialize app resources (directories, etc.)
+    initialize_app()
+    
     # Check for API key
     if not check_api_key():
+        st.warning("OpenAI API key not found. Please set it in your environment.")
+        
+        # Let user enter API key
+        user_api_key = st.text_input("Enter your OpenAI API key:", type="password")
+        if user_api_key:
+            os.environ["OPENAI_API_KEY"] = user_api_key
+            st.success("API key set successfully! Reloading app...")
+            time.sleep(1)
+            st.rerun()
         return
     
     # Check if knowledge base exists
@@ -265,6 +280,11 @@ def main():
             st.success("Using LangGraph-based agentic RAG")
         else:
             st.info("Using original agentic RAG implementation")
+            
+        # List available implementations
+        st.write("### Available Implementations")
+        available_implementations = RAGFactory.list_available_implementations()
+        st.code(f"Available: {', '.join(available_implementations)}")
     
     st.markdown("""
     This application demonstrates the differences between Classic RAG and Agentic RAG approaches.
@@ -402,10 +422,6 @@ def main():
                     # Import necessary modules
                     import networkx as nx
                     import matplotlib.pyplot as plt
-                    from rag_langgraph import build_rag_graph
-                    
-                    # Create the graph
-                    graph = build_rag_graph()
                     
                     # Display the graph structure
                     st.write("### LangGraph Structure")
@@ -414,13 +430,13 @@ def main():
                     # Create a simple text representation of the graph
                     graph_description = """
                     Graph Structure:
-                    - START → agent
-                    - agent → retrieve (when using tools)
-                    - agent → generate (when not using tools)
-                    - retrieve → analyze
-                    - analyze → agent (when context insufficient)
-                    - analyze → generate (when context sufficient)
-                    - generate → END
+                    - START → planning
+                    - planning → retrieval
+                    - retrieval → generation
+                    - generation → evaluation
+                    - evaluation → retrieval (when more info needed)
+                    - evaluation → generation (when answer needs refinement)
+                    - evaluation → END (when answer is satisfactory)
                     """
                     st.code(graph_description, language="text")
                     
@@ -429,18 +445,18 @@ def main():
                     G = nx.DiGraph()
                     
                     # Add nodes
-                    nodes = ["START", "agent", "retrieve", "analyze", "generate", "END"]
+                    nodes = ["START", "planning", "retrieval", "generation", "evaluation", "END"]
                     G.add_nodes_from(nodes)
                     
                     # Add edges
                     edges = [
-                        ("START", "agent"),
-                        ("agent", "retrieve"), 
-                        ("agent", "generate"),
-                        ("retrieve", "analyze"),
-                        ("analyze", "agent"),
-                        ("analyze", "generate"),
-                        ("generate", "END")
+                        ("START", "planning"),
+                        ("planning", "retrieval"), 
+                        ("retrieval", "generation"),
+                        ("generation", "evaluation"),
+                        ("evaluation", "retrieval"),
+                        ("evaluation", "generation"),
+                        ("evaluation", "END")
                     ]
                     G.add_edges_from(edges)
                     
@@ -503,7 +519,7 @@ def main():
         st.session_state.processed_query = st.session_state.user_query
         process_query(st.session_state.user_query)
 
-# Initialize PyTorch settings and run the app
+# Initialize and run the app
 if __name__ == "__main__":
     # Run the main app
     try:
