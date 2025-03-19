@@ -1,178 +1,192 @@
 import os
-from typing import Callable, List, Dict, Any
-from pathlib import Path
+from typing import List, Dict, Any, Optional, Callable
+import logging
 
-from langchain_openai import ChatOpenAI
-from langchain.schema import Document
-from langchain.prompts import PromptTemplate
-from langchain.callbacks.base import BaseCallbackHandler
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
+# LangChain imports for chains and prompts
+try:
+    from langchain_core.prompts import ChatPromptTemplate
+    from langchain_openai import ChatOpenAI
+    from langchain_core.output_parsers import StrOutputParser
+    from langchain_core.runnables import RunnablePassthrough
+    from langchain_core.documents import Document
+    from langchain.callbacks.base import BaseCallbackHandler
+except ImportError as e:
+    logger.error(f"Error importing LangChain components: {e}")
+
+# Local imports
 from knowledge_base import get_document_store
 
+# Set your OPENAI_API_KEY in your environment or directly here (not recommended for security)
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Define the StreamingCallbackHandler class
 class StreamingCallbackHandler(BaseCallbackHandler):
-    """Callback handler for streaming LLM responses."""
-    def __init__(self, callback_fn: Callable[[str], None]):
-        # Validate callback is callable
-        if not callable(callback_fn):
-            raise TypeError(f"callback_fn must be callable, got {type(callback_fn)}")
-        self.callback_fn = callback_fn
-        
+    """Callback handler for streaming LLM output to the UI."""
+    
+    def __init__(self, callback_function: Callable[[str], None]):
+        """Initialize the callback handler with a streaming function."""
+        self.callback_function = callback_function
+    
     def on_llm_new_token(self, token: str, **kwargs) -> None:
-        """Run on new LLM token."""
+        """Stream tokens as they become available."""
         try:
-            self.callback_fn(token)
+            self.callback_function(token)
         except Exception as e:
-            print(f"Error in callback: {e}")
-            # Provide a detailed error message to help with debugging
-            import traceback
-            traceback.print_exc()
-    
-    # Override other potential callback methods that might be called
-    def on_chain_start(self, *args, **kwargs) -> None:
-        """Override to prevent 'ignore_chain' attribute error."""
-        pass
-    
-    def on_chain_end(self, *args, **kwargs) -> None:
-        """Override to prevent attribute errors."""
-        pass
-        
-    def on_chain_error(self, *args, **kwargs) -> None:
-        """Override to prevent attribute errors."""
-        pass
+            logger.error(f"Error in callback function: {e}")
 
-def get_content_from_llm_response(response):
-    """
-    Extract string content from various types of LLM responses.
-    Handles both string responses and LangChain AIMessage objects.
-    
-    Args:
-        response: LLM response (string or AIMessage)
-        
-    Returns:
-        String content from the response
-    """
-    # If it's already a string, return it
-    if isinstance(response, str):
-        return response
-    
-    # If it's an AIMessage, extract the content
-    if hasattr(response, 'content'):
-        return response.content
-        
-    # If it's any other object with string representation, convert to string
-    return str(response)
-
-def retrieve_relevant_context(query: str, top_k: int = 5, fetch_k: int = None, filter_threshold: float = None) -> List[Document]:
-    """
-    Retrieve the most relevant documents for the query with enhanced capabilities.
-    
-    Args:
-        query: The search query
-        top_k: Number of documents to retrieve
-        fetch_k: Number of documents to initially fetch before filtering (if None, uses top_k * 2)
-        filter_threshold: Optional similarity threshold for filtering results
-        
-    Returns:
-        List of retrieved documents
-    """
+def get_retriever(k: int = 4):
+    """Get the retriever from the document store."""
     try:
         vectorstore = get_document_store()
-        
-        # Default fetch_k to double top_k for more diverse candidate pool
-        if fetch_k is None:
-            fetch_k = top_k * 2
-        
-        # First attempt: standard similarity search
-        if filter_threshold is not None:
-            # Use score threshold if provided
-            documents = vectorstore.similarity_search_with_score(
-                query, 
-                k=fetch_k
-            )
-            # Filter by threshold and take top_k
-            filtered_docs = [(doc, score) for doc, score in documents if score >= filter_threshold]
-            # Sort by score and take top k
-            sorted_docs = sorted(filtered_docs, key=lambda x: x[1], reverse=True)[:top_k]
-            documents = [doc for doc, _ in sorted_docs]
-        else:
-            # Standard similarity search
-            documents = vectorstore.similarity_search(query, k=top_k)
-        
-        # If we didn't get enough docs, try a more lenient search
-        if len(documents) < top_k:
-            additional_docs = vectorstore.similarity_search(
-                query, 
-                k=top_k - len(documents)
-            )
-            # Add only non-duplicate documents
-            existing_content = {doc.page_content for doc in documents}
-            for doc in additional_docs:
-                if doc.page_content not in existing_content:
-                    documents.append(doc)
-                    existing_content.add(doc.page_content)
-        
-        return documents
-        
+        if vectorstore is None:
+            logger.error("Document store is None")
+            return None
+            
+        # Set the search parameters
+        retriever = vectorstore.as_retriever(
+            search_type="similarity",
+            search_kwargs={"k": k}
+        )
+        return retriever
     except Exception as e:
-        print(f"Error in retrieve_relevant_context: {e}")
-        # Return an empty list if retrieval fails
+        logger.error(f"Error getting retriever: {e}")
+        return None
+
+def format_docs(docs: List[Document]) -> str:
+    """Format the documents into a string for the prompt."""
+    if not docs:
+        return "No relevant documents found."
+        
+    formatted_docs = []
+    for i, doc in enumerate(docs, 1):
+        source = doc.metadata.get("source", "Unknown source")
+        content = doc.page_content
+        formatted_doc = f"Document {i} (Source: {source}):\n{content}"
+        formatted_docs.append(formatted_doc)
+    
+    return "\n\n".join(formatted_docs)
+
+# Alias format_context to format_docs for backward compatibility 
+format_context = format_docs
+
+def retrieve_relevant_context(query: str, top_k: int = 3) -> List[Document]:
+    """Retrieve the most relevant documents for a query."""
+    try:
+        # Log the query
+        logger.info(f"Retrieving documents for query: {query}")
+        
+        retriever = get_retriever(k=top_k)
+        if retriever:
+            docs = retriever.invoke(query)
+            logger.info(f"Retrieved {len(docs)} documents")
+            return docs
+        logger.warning("No retriever available")
+        return []
+    except Exception as e:
+        logger.error(f"Error retrieving documents: {e}")
         return []
 
-def format_context(documents: List[Document]) -> str:
-    """Format the retrieved documents into a context string."""
-    context = ""
-    for i, doc in enumerate(documents):
-        # Include metadata if available
-        metadata_str = ""
-        if hasattr(doc, 'metadata') and doc.metadata:
-            source = doc.metadata.get('source', 'Unknown source')
-            article_title = doc.metadata.get('article_title', 'Unknown article')
-            metadata_str = f"Source: {source}, Article: {article_title}\n"
+def create_classical_rag_chain():
+    """Create a classic RAG chain."""
+    try:
+        # Initialize the language model
+        llm = ChatOpenAI(temperature=0)
         
-        context += f"Document {i+1}:\n{metadata_str}{doc.page_content}\n\n"
-    return context
-
-def run_classic_rag(query: str, stream_callback: Callable[[str], None]) -> None:
-    """Run the classic RAG pipeline with a single retrieval step."""
-    # Validate callback is callable
-    if not callable(stream_callback):
-        print(f"Error: stream_callback must be callable, got {type(stream_callback)}")
-        # Create a default callback that does nothing
-        stream_callback = lambda x: None
-    
-    # 1. Retrieve relevant documents
-    documents = retrieve_relevant_context(query)
-    
-    # 2. Format context
-    context = format_context(documents)
-    
-    # 3. Create the prompt
-    prompt_template = """You are a helpful AI assistant that answers questions based on the provided context. 
-If the information needed to answer the question is not in the context, say "I don't have enough information to answer this question."
-Do not make up or guess at information that is not provided in the context.
+        # Initialize the retriever
+        retriever = get_retriever(k=3)
+        
+        # Define the prompt template
+        template = """You are a helpful assistant that answers questions based on the provided context.
+If the context doesn't contain the answer, just say you don't know and keep your answer short.
+Do not make up information that is not provided in the context.
 
 Context:
 {context}
 
-Question: {query}
+Question: {question}
 
 Answer:"""
+        
+        prompt = ChatPromptTemplate.from_template(template)
+        
+        if retriever is None:
+            # Create a chain that just uses the LLM without retrieval
+            logger.warning("Retriever is not available. Creating a chain without retrieval.")
+            chain = (
+                {"context": lambda x: "No context available.", "question": RunnablePassthrough()}
+                | prompt
+                | llm
+                | StrOutputParser()
+            )
+        else:
+            # Create a chain that combines retrieval and the LLM
+            chain = (
+                {"context": retriever | format_docs, "question": RunnablePassthrough()}
+                | prompt
+                | llm
+                | StrOutputParser()
+            )
+        
+        return chain
+    except Exception as e:
+        logger.error(f"Error creating RAG chain: {e}")
+        raise
 
-    prompt = PromptTemplate(
-        template=prompt_template,
-        input_variables=["context", "query"]
-    )
-    
-    # 4. Get answer from LLM with streaming
-    llm = ChatOpenAI(
-        model_name="gpt-4o",
-        temperature=0,
-        streaming=True,
-        callbacks=[StreamingCallbackHandler(stream_callback)]
-    )
-    
-    # 5. Generate answer
-    formatted_prompt = prompt.format(context=context, query=query)
-    _ = llm.invoke(formatted_prompt)  # The handler will take care of streaming
-    
-    return 
+def query_rag(query: str) -> Dict[str, Any]:
+    """Query the RAG system with a question."""
+    try:
+        # Log the start of processing
+        logger.info(f"Processing RAG query: {query}")
+        
+        chain = create_classical_rag_chain()
+        
+        # Get the documents from the retriever separately to include them in the output
+        docs = []
+        retriever = get_retriever(k=3)
+        
+        if retriever:
+            try:
+                docs = retriever.invoke(query)
+                logger.info(f"Retrieved {len(docs)} documents for presentation")
+            except Exception as e:
+                logger.error(f"Error retrieving documents: {e}")
+        else:
+            logger.warning("No retriever available for document retrieval")
+        
+        # Get the answer from the chain
+        try:
+            logger.info("Generating answer with LLM")
+            answer = chain.invoke(query)
+            logger.info("Answer generation complete")
+        except Exception as e:
+            logger.error(f"Error generating answer: {e}")
+            answer = f"I encountered an error while trying to answer your question: {str(e)}"
+        
+        # Format and return the result
+        result = {
+            "query": query,
+            "answer": answer,
+            "documents": [
+                {
+                    "content": doc.page_content,
+                    "source": doc.metadata.get("source", "Unknown source")
+                }
+                for doc in docs
+            ]
+        }
+        
+        logger.info("RAG query processing complete")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in query_rag: {e}")
+        # Return a minimal result with the error
+        return {
+            "query": query,
+            "answer": f"An error occurred: {str(e)}",
+            "documents": []
+        } 

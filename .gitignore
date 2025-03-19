@@ -28,6 +28,8 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+venv_latest/
+venv_fixed/
 
 # Unit tests and coverage
 htmlcov/
@@ -59,6 +61,8 @@ cursor.log
 .streamlit/*
 !.streamlit/config.toml
 .streamlit/secrets.toml
+streamlit_app.log
+*.streamlit/
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -94,4 +98,14 @@ embeddings/
 .env.production
 credentials.json
 *_key.json
-api_keys.txt 
+api_keys.txt
+
+# Added for RAG application
+**/inotify_watches.log
+streamlit*.log
+**/torch_cache/
+*__pycache__
+**/.pytest_cache/
+**/node_modules
+**/package-lock.json
+.streamlit/config.toml.backup 
