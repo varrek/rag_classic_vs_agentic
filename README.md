@@ -66,7 +66,10 @@ rags_presentation/
 
 ## Dataset
 
-The application uses a custom dataset consisting of question-answer pairs and their corresponding source documents. The data is organized into sets (S08, S09, S10) with the following structure:
+The application uses the RAG Mini Wikipedia dataset from Hugging Face:
+[@rag-mini-wikipedia](https://huggingface.co/datasets/rag-datasets/rag-mini-wikipedia/tree/main)
+
+The data is organized into sets (S08, S09, S10) with the following structure:
 
 ```
 data/
