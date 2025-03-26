@@ -13,6 +13,7 @@ This repository contains a Retrieval-Augmented Generation (RAG) comparison appli
 - **Interactive UI**: Streamlit-based interface with real-time processing logs
 - **Semantic Evaluation**: Compare answers using semantic similarity metrics
 - **Graph Visualization**: Visualize the LangGraph structure of the agentic RAG system
+- **Shared Modules**: Centralized configuration, types, prompts, and utilities
 
 ## Project Structure
 
@@ -29,6 +30,10 @@ rags_presentation/
 │   ├── knowledge_base.py     # Knowledge base and vector store management
 │   ├── rag/                  # RAG implementations
 │   │   ├── __init__.py       # RAG package initialization
+│   │   ├── config.py         # Shared configuration parameters
+│   │   ├── types.py          # Shared type definitions
+│   │   ├── prompts.py        # Shared prompt templates
+│   │   ├── utils.py          # Shared utility functions
 │   │   ├── factory.py        # Factory pattern for selecting implementations
 │   │   ├── classic.py        # Classic RAG implementation
 │   │   ├── agentic/          # Agentic RAG implementations
@@ -71,6 +76,7 @@ rags_presentation/
 - Multi-step process with query refinement and rewriting
 - Dynamic context building based on intermediate results
 - Self-critique and validation of generated answers
+- Shared configuration and utilities across implementations
 
 #### LangGraph Implementation (Default)
 - Graph-based execution flow using LangGraph
@@ -78,12 +84,45 @@ rags_presentation/
 - Clearly defined nodes, edges, and state for easier visualization and debugging
 - Explicit decision-making in the evaluation node for determining next actions
 - More modular and maintainable code structure with separation of concerns
+- Uses shared configuration, types, and prompts from central modules
 
 #### Original Implementation (Legacy)
 - Procedural execution flow with iterative refinement
 - Function-based approach with custom state management
 - Multiple specialized retrieval strategies based on query type
 - Synthetic data generation for handling edge cases
+- Refactored to use shared modules for consistency
+
+## Shared Modules
+
+The application uses several shared modules to ensure consistency and reduce code duplication:
+
+### Configuration (`config.py`)
+- Common parameters like iteration limits and retrieval settings
+- Model configuration (e.g., default model name)
+- Feature flags for various capabilities
+- API keys and external service configuration
+- Specialized data like animal information
+
+### Types (`types.py`)
+- Common type definitions using TypedDict
+- State types for RAG implementations
+- Result types for consistent return values
+- Analysis and retrieval result types
+
+### Prompts (`prompts.py`)
+- Shared prompt templates for consistency
+- Templates for context analysis
+- Templates for answer generation
+- Templates for self-critique
+- Templates for query planning
+
+### Utilities (`utils.py`)
+- Shared utility functions
+- LLM response processing
+- Document processing and optimization
+- Context management
+- Specialized tool implementations
 
 ## Using the RAG Factory
 
