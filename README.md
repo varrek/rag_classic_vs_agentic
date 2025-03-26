@@ -64,34 +64,69 @@ rags_presentation/
 └── README.md                 # This file
 ```
 
+## Dataset
+
+The application uses a custom dataset consisting of question-answer pairs and their corresponding source documents. The data is organized into sets (S08, S09, S10) with the following structure:
+
+```
+data/
+├── qa/                           # Question-Answer pairs directory
+│   ├── S08_question_answer_pairs.txt
+│   ├── S09_question_answer_pairs.txt
+│   └── S10_question_answer_pairs.txt
+├── S08_set[1-4]_topics.txt      # Topic files for each set
+├── S09_set[1-5]_topics.txt
+├── S10_set[1-6]_topics.txt
+└── S[08-10]_set[1-6]_a[1-10].txt.clean  # Source documents
+
+```
+
+### Dataset Structure
+
+1. **Question-Answer Pairs** (`data/qa/`):
+   - Contains pairs of questions and their corresponding answers
+   - Organized by year (S08, S09, S10)
+   - Used for testing and evaluating RAG performance
+
+2. **Topic Files** (`*_topics.txt`):
+   - Define the topics covered in each set
+   - Help organize and categorize the source documents
+
+3. **Source Documents** (`*.txt.clean`):
+   - Clean text files containing the source information
+   - Named in the format: `S{year}_set{set_number}_a{article_number}.txt.clean`
+   - Used as the knowledge base for RAG retrieval
+
 ## RAG Approaches Compared
+
+The application compares three different RAG approaches using this custom dataset:
 
 ### Classic RAG
 - Simple retrieval followed by generation using the retrieved context
 - Single-step process: retrieve documents, then generate an answer
 - Deterministic document retrieval based on vector similarity
+- Best for straightforward queries with clear context needs
 
-### Agentic RAG
-- Iterative retrieval with planning, self-critique, and specialized tools
-- Multi-step process with query refinement and rewriting
+### Agentic RAG (Original Implementation)
+- Iterative retrieval with planning and self-critique
+- Multi-step process with query refinement
 - Dynamic context building based on intermediate results
-- Self-critique and validation of generated answers
-- Shared configuration and utilities across implementations
+- Better for complex queries requiring multiple pieces of information
+- Includes fallback strategies and synthetic data generation
 
-#### LangGraph Implementation (Default)
+### Agentic RAG (LangGraph Implementation)
 - Graph-based execution flow using LangGraph
-- State management with BaseModel for better type safety
-- Clearly defined nodes, edges, and state for easier visualization and debugging
-- Explicit decision-making in the evaluation node for determining next actions
-- More modular and maintainable code structure with separation of concerns
-- Uses shared configuration, types, and prompts from central modules
+- State management with explicit decision nodes
+- Iterative refinement with clear state transitions
+- Optimal for queries requiring structured reasoning
+- Provides better visibility into the reasoning process
 
-#### Original Implementation (Legacy)
-- Procedural execution flow with iterative refinement
-- Function-based approach with custom state management
-- Multiple specialized retrieval strategies based on query type
-- Synthetic data generation for handling edge cases
-- Refactored to use shared modules for consistency
+Each approach is evaluated on:
+- Answer accuracy and completeness
+- Context relevance
+- Processing time
+- Number of retrieval iterations
+- Resource usage
 
 ## Shared Modules
 
