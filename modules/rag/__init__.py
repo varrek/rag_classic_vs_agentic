@@ -5,6 +5,23 @@ This package contains different implementations of Retrieval-Augmented Generatio
 including agentic and LangGraph approaches.
 """
 
-from modules.rag.factory import RAGFactory, run_rag
+from .agentic.original import run_agentic_rag
+from .langgraph.implementation import run_langgraph_rag
+from .types import AgentState, RAGResult
+from .config import (
+    MAX_ITERATIONS,
+    INITIAL_TOP_K,
+    ENABLE_PLANNING,
+    ENABLE_SELF_CRITIQUE
+)
 
-__all__ = ['RAGFactory', 'run_rag']
+__all__ = [
+    'run_agentic_rag',
+    'run_langgraph_rag',
+    'AgentState',
+    'RAGResult',
+    'MAX_ITERATIONS',
+    'INITIAL_TOP_K',
+    'ENABLE_PLANNING',
+    'ENABLE_SELF_CRITIQUE'
+]

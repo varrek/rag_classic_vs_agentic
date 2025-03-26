@@ -30,7 +30,8 @@ from ..config import (
     WEB_SEARCH_ENABLED,
     SYNTHETIC_DATA_ENABLED,
     GOOGLE_CSE_API_KEY,
-    GOOGLE_CSE_ENGINE_ID
+    GOOGLE_CSE_ENGINE_ID,
+    MODEL_NAME
 )
 from ..utils import (
     get_content_from_llm_response,

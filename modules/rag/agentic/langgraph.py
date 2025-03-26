@@ -45,7 +45,6 @@ WEB_SEARCH_ENABLED = st.secrets.get("google_search", {}).get("WEB_SEARCH_ENABLED
 SYNTHETIC_DATA_ENABLED = True
 ENABLE_PLANNING = True
 ENABLE_SELF_CRITIQUE = True
-ENABLE_ANIMAL_DATA_TOOL = True
 MAX_CONTEXT_LENGTH = 10000
 MAX_DOCUMENT_LENGTH = 1500
 
@@ -58,26 +57,6 @@ if GOOGLE_CSE_API_KEY:
     logger.info("Google Custom Search API Key found in secrets")
 else:
     logger.warning("Google Custom Search API Key not found in secrets")
-
-# Animal data for specialized knowledge tool
-ANIMAL_DATA = {
-    "otter": {
-        "behavior": "Otters are known for their playful behavior. They often float on their backs, using their chests as 'tables' for cracking open shellfish with rocks. They're one of the few animals that use tools. They're very social animals and live in family groups. Baby otters (pups) cannot swim when born and are taught by their mothers.",
-        "diet": "Otters primarily eat fish, crustaceans, and mollusks. Sea otters in particular are known for using rocks to crack open shellfish. They have a high metabolism and need to eat approximately 25% of their body weight daily.",
-        "habitat": "Different otter species inhabit various aquatic environments. Sea otters live in coastal marine habitats, river otters in freshwater rivers, streams and lakes, while some species adapt to brackish water environments. They typically prefer areas with clean water and abundant prey.",
-        "tools": "Sea otters are one of the few non-primate animals known to use tools. They often use rocks to crack open hard-shelled prey like clams, mussels, and crabs. They may store their favorite rocks in the pouches of loose skin under their forelimbs. This tool use is not taught by mothers but appears to be an innate behavior that develops as they grow."
-    },
-    "dolphin": {
-        "behavior": "Dolphins are highly intelligent marine mammals known for their playful behavior and complex social structures. They communicate using clicks, whistles, and body language. They live in groups called pods and are known to help injured members. They sleep with one brain hemisphere at a time, keeping one eye open.",
-        "diet": "Dolphins primarily feed on fish and squid. They use echolocation to find prey, sometimes working in groups to herd fish. Some dolphins use a technique called 'fish whacking' where they strike fish with their tails to stun them before eating.",
-        "habitat": "Dolphins inhabit oceans worldwide, from shallow coastal waters to deep offshore environments. Different species have adapted to specific habitats, from warm tropical waters to colder regions. Some dolphin species even live in rivers.",
-    },
-    "elephant": {
-        "behavior": "Elephants are highly social animals with complex emotional lives. They live in matriarchal groups led by the oldest female. They display behaviors suggesting grief, joy, and self-awareness. They communicate through rumbles, some too low for humans to hear. Elephants have excellent memories and can recognize hundreds of individuals.",
-        "diet": "Elephants are herbivores, consuming up to 300 pounds of plant matter daily. African elephants primarily browse, eating leaves, bark, and branches from trees and shrubs. Asian elephants graze more, eating grasses, as well as browsing. They spend 12-18 hours per day feeding.",
-        "habitat": "African elephants inhabit savannas, forests, deserts, and marshes. Asian elephants prefer forested areas and transitional zones between forests and grasslands. Both species need large territories with access to water and abundant vegetation. Human encroachment has significantly reduced their natural habitats.",
-    }
-}
 
 def get_content_from_llm_response(response):
     """
@@ -100,60 +79,6 @@ def get_content_from_llm_response(response):
     # Return empty string as fallback
     return ""
 
-def get_animal_data(query: str) -> Optional[Document]:
-    """
-    Retrieve specialized animal data for specific queries.
-    
-    Args:
-        query: The user's query
-        
-    Returns:
-        Document with animal information or None if not applicable
-    """
-    if not ENABLE_ANIMAL_DATA_TOOL:
-        return None
-        
-    # Convert query to lowercase for matching
-    query_lower = query.lower()
-    
-    # Check for animal-related queries
-    for animal, data in ANIMAL_DATA.items():
-        if animal in query_lower:
-            # Determine which aspect of the animal the query is about
-            aspect = None
-            
-            # Special case for otter tool use
-            if animal == "otter" and any(word in query_lower for word in ["tool", "rock", "crack", "shellfish"]):
-                aspect = "tools"
-            elif "behavior" in query_lower or "do" in query_lower or "act" in query_lower or "play" in query_lower:
-                aspect = "behavior"
-            elif "eat" in query_lower or "food" in query_lower or "diet" in query_lower:
-                aspect = "diet"
-            elif "live" in query_lower or "habitat" in query_lower or "environment" in query_lower:
-                aspect = "habitat"
-                
-            # Construct response based on query focus
-            content = f"Information about {animal.capitalize()}:\n\n"
-            
-            if aspect and aspect in data:
-                # Just include the specific aspect
-                content += f"{aspect.capitalize()}: {data[aspect]}\n\n"
-            else:
-                # Include all information
-                for key, value in data.items():
-                    content += f"{key.capitalize()}: {value}\n\n"
-            
-            return Document(
-                page_content=content,
-                metadata={
-                    "source": "animal_data_tool",
-                    "animal": animal,
-                    "aspect": aspect
-                }
-            )
-    
-    return None
-
 # Define the AgentState TypedDict
 class AgentState(TypedDict):
     """State for the agentic RAG system"""
@@ -174,16 +99,6 @@ def is_animal_query(query: str) -> bool:
     Returns:
         True if query is about a known animal, False otherwise
     """
-    if not ENABLE_ANIMAL_DATA_TOOL:
-        return False
-        
-    query_lower = query.lower()
-    
-    # Check if any of our known animals are in the query
-    for animal in ANIMAL_DATA.keys():
-        if animal in query_lower:
-            return True
-            
     return False
 
 def summarize_document(document: Document) -> Document:
@@ -478,13 +393,6 @@ def retrieve(state: AgentState):
                     new_docs = retriever.invoke(retrieval_query)
                     documents.extend(new_docs)
                     logger.info(f"Retrieved {len(new_docs)} documents using query: {retrieval_query}")
-                    
-                    # Check for animal-specific data
-                    if is_animal_query(retrieval_query):
-                        animal_doc = get_animal_data(retrieval_query)
-                        if animal_doc:
-                            documents.append(animal_doc)
-                            logger.info("Added specialized animal data document")
                 
     # If no documents were retrieved through tool calls, use the original query
     if not documents:
@@ -493,13 +401,6 @@ def retrieve(state: AgentState):
         retriever = vectorstore.as_retriever(search_kwargs={"k": INITIAL_TOP_K})
         documents = retriever.invoke(query)
         logger.info(f"Retrieved {len(documents)} documents using original query")
-        
-        # Check for animal-specific data for the original query
-        if is_animal_query(query):
-            animal_doc = get_animal_data(query)
-            if animal_doc:
-                documents.append(animal_doc)
-                logger.info("Added specialized animal data document")
     
     # Return updated state
     return {
