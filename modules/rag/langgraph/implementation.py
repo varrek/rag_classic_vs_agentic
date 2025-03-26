@@ -29,13 +29,10 @@ from ..types import AgentState, RAGResult
 from ..config import (
     MAX_ITERATIONS,
     INITIAL_TOP_K,
-    ENABLE_ANIMAL_DATA_TOOL,
     MODEL_NAME
 )
 from ..utils import (
     get_content_from_llm_response,
-    get_animal_data,
-    is_animal_query,
     optimize_context,
     summarize_document
 )
@@ -68,14 +65,6 @@ def agent(state: AgentState):
     
     query = latest_message.content
     logger.info(f"Agent planning for query: {query}")
-    
-    # Check if animal data tool would be useful
-    if is_animal_query(query):
-        logger.info("Detected animal query, will use specialized tool")
-        # Get animal data
-        animal_doc = get_animal_data(query)
-        if animal_doc:
-            state["documents"].append(animal_doc)
     
     # Create an initial plan using an LLM
     llm = ChatOpenAI(temperature=0.2, model=MODEL_NAME)
@@ -294,11 +283,6 @@ def should_continue_retrieval(state: AgentState) -> Literal["retrieve_more", "ge
 
 def check_tools_condition(state: AgentState) -> Literal["tools", "end"]:
     """Determine whether to use tools or end the process."""
-    animal_query = is_animal_query(state["messages"][-1].content)
-    
-    if animal_query and ENABLE_ANIMAL_DATA_TOOL:
-        return "tools"
-    
     return "end"
 
 def build_rag_graph():

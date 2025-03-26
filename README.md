@@ -102,7 +102,6 @@ The application uses several shared modules to ensure consistency and reduce cod
 - Model configuration (e.g., default model name)
 - Feature flags for various capabilities
 - API keys and external service configuration
-- Specialized data like animal information
 
 ### Types (`types.py`)
 - Common type definitions using TypedDict
